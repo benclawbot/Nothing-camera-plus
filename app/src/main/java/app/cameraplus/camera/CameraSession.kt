@@ -12,6 +12,7 @@ import android.provider.MediaStore
 import androidx.camera.camera2.interop.Camera2CameraInfo
 import androidx.camera.camera2.interop.Camera2Interop
 import androidx.camera.core.Camera
+import androidx.camera.core.CameraFilter
 import androidx.camera.core.CameraSelector
 import androidx.camera.core.FocusMeteringAction
 import androidx.camera.core.ImageCapture
@@ -74,6 +75,17 @@ class CameraSession(
     private val mainExecutor: Executor = ContextCompat.getMainExecutor(context)
     private val ioExecutor: Executor = Executors.newSingleThreadExecutor()
 
+    private companion object {
+        /** How long a plain tap-to-focus keeps its metering point. */
+        const val FOCUS_AUTO_CANCEL_SECONDS = 5L
+
+        /** Effectively "until released": a locked focus point. */
+        const val LOCK_DURATION_SECONDS = 60L * 60L
+
+        /** Used when the HAL does not report an AE compensation step. */
+        const val DEFAULT_EV_STEP = 1f / 3f
+    }
+
     private var cameraProvider: ProcessCameraProvider? = null
     private var boundCamera: Camera? = null
     private var imageCapture: ImageCapture? = null
@@ -90,6 +102,14 @@ class CameraSession(
     private var manualControls = ManualControls()
     private var zeroShutterLagSupported = false
     private var appliedCaptureMode = ImageCapture.CAPTURE_MODE_MINIMIZE_LATENCY
+
+    // v1.1 lens work: the bound camera is chosen explicitly (the HAL's first
+    // back camera is not necessarily the main lens), and every zoom request is
+    // a *displayed* zoom resolved onto (camera, ratio) by [LensPlan].
+    private var selectedCameraId: String? = null
+    private var pendingZoomRatio: Float? = null
+    private var lensLayout: LensLayout? = null
+    private var cameraFlags: Map<String, CameraFlags> = emptyMap()
 
     private var activeRecording: Recording? = null
     private var onVideoFinished: ((Uri) -> Unit)? = null
@@ -157,6 +177,9 @@ class CameraSession(
         } else {
             CameraSelector.LENS_FACING_BACK
         }
+        // The other facing has its own lenses; let the plan choose its default.
+        selectedCameraId = null
+        pendingZoomRatio = null
         rebind(onError)
     }
 
@@ -208,28 +231,119 @@ class CameraSession(
     }
 
     /**
-     * Tap-to-focus / tap-to-meter (M5): runs a combined AF+AE metering action
-     * around the tapped point in preview-view coordinates. It auto-cancels,
-     * so the camera returns to its own judgement after a few seconds.
+     * Tap-to-focus / tap-to-meter: runs a combined AF+AE metering action around
+     * the tapped point in preview-view coordinates. It auto-cancels, so the
+     * camera returns to its own judgement after a few seconds; [lock] keeps it
+     * until [releaseFocusLock].
      */
-    fun focusAndMeterAt(x: Float, y: Float) {
+    fun focusAndMeterAt(x: Float, y: Float, lock: Boolean = false) {
         val previewView = boundPreviewView ?: return
         val camera = boundCamera ?: return
         val point = previewView.meteringPointFactory.createPoint(x, y)
-        val action = FocusMeteringAction.Builder(
+        val builder = FocusMeteringAction.Builder(
             point,
             FocusMeteringAction.FLAG_AF or FocusMeteringAction.FLAG_AE,
-        ).setAutoCancelDuration(5, TimeUnit.SECONDS).build()
-        camera.cameraControl.startFocusAndMetering(action)
+        )
+        if (lock) {
+            builder.setAutoCancelDuration(LOCK_DURATION_SECONDS, TimeUnit.SECONDS)
+        } else {
+            builder.setAutoCancelDuration(FOCUS_AUTO_CANCEL_SECONDS, TimeUnit.SECONDS)
+        }
+        camera.cameraControl.startFocusAndMetering(builder.build())
+    }
+
+    /** Drops a metering lock created with [focusAndMeterAt] and its lock flag. */
+    fun releaseFocusLock() {
+        boundCamera?.cameraControl?.cancelFocusAndMetering()
+    }
+
+    /**
+     * Brightness on the viewfinder (M11): the exposure-compensation index the
+     * hardware accepts, clamped so a slider can never request something out of
+     * range. Returns the index actually applied.
+     */
+    fun setExposureCompensationIndex(index: Int): Int {
+        val camera = boundCamera ?: return 0
+        val range = camera.cameraInfo.exposureState.exposureCompensationRange
+        val target = index.coerceIn(range.lower, range.upper)
+        camera.cameraControl.setExposureCompensationIndex(target)
+        return target
+    }
+
+    /** The exposure-compensation index currently applied. */
+    fun currentExposureCompensationIndex(): Int =
+        boundCamera?.cameraInfo?.exposureState?.exposureCompensationIndex ?: 0
+
+    /**
+     * Displayed zoom (v1.1): the caller speaks in the numbers the UI shows —
+     * 0.6x, 1x, 3.5x, 20x — where 1x is the reference lens. The request is
+     * resolved onto the camera that can produce it; switching to another
+     * physical lens rebinds, everything else is a plain zoom-ratio change so
+     * the transition stays instant. Returns the zoom actually applied.
+     */
+    fun setDisplayedZoom(
+        displayed: Float,
+        onError: (Exception) -> Unit = {},
+    ): Float {
+        val layout = lensLayout
+        val camera = boundCamera
+        if (layout == null || camera == null) return applyZoomRatio(displayed)
+        val currentId = Camera2CameraInfo.from(camera.cameraInfo).cameraId
+        val target = layout.targetFor(displayed, currentId)
+        if (target.needsRebind) {
+            selectedCameraId = target.cameraId
+            pendingZoomRatio = target.zoomRatio
+            rebind(onError)
+        } else {
+            pendingZoomRatio = null
+            applyZoomRatio(target.zoomRatio)
+        }
+        return target.displayedZoom
+    }
+
+    /** Current displayed zoom, from the live zoom state. */
+    fun currentDisplayedZoom(): Float {
+        val camera = boundCamera ?: return 1f
+        val layout = lensLayout ?: return 1f
+        val ratio = camera.cameraInfo.zoomState.value?.zoomRatio ?: return 1f
+        return layout.displayedZoomFor(
+            Camera2CameraInfo.from(camera.cameraInfo).cameraId,
+            ratio,
+        )
+    }
+
+    /**
+     * Applies a zoom *ratio* on the bound camera, clamped to its live range:
+     * the HAL throws `IllegalArgumentException` on out-of-range requests and
+     * each lens accepts a different range.
+     */
+    private fun applyZoomRatio(ratio: Float): Float {
+        val camera = boundCamera ?: return 1f
+        val state = camera.cameraInfo.zoomState.value ?: return 1f
+        val target = ratio.coerceIn(state.minZoomRatio, state.maxZoomRatio)
+        camera.cameraControl.setZoomRatio(target)
+        return target
     }
 
     /**
      * Zoom stop selection (M4): on multi-lens devices the platform resolves
      * the ratio onto a physical lens, so crossing a stop during recording is
      * a camera-managed transition instead of a session rebuild.
+     *
+     * The ratio is clamped to the bound camera's live `ZoomState`: the HAL
+     * throws `IllegalArgumentException` on out-of-range requests, and the
+     * usable range differs per lens (which is why the zoom pill is rebuilt
+     * from capabilities after every bind).
      */
-    fun setZoomRatio(ratio: Float) {
-        boundCamera?.cameraControl?.setZoomRatio(ratio)
+    fun setZoomRatio(
+        ratio: Float,
+        onError: (Exception) -> Unit = {},
+    ): Float {
+        val applied = applyZoomRatio(ratio)
+        if (lensLayout == null && boundCamera != null) {
+            onError(IllegalStateException("Zoom $ratio is not available on this lens"))
+        }
+        return applied
     }
 
     fun setStabilizationEnabled(enabled: Boolean, onError: (Exception) -> Unit = {}) {
@@ -268,10 +382,10 @@ class CameraSession(
             onError(IllegalStateException("Camera is not ready"))
             return
         }
-        if (rawEnabled || settings == ProcessingSettings.NATURAL) {
-            captureToFile(capture, onSaved, onError)
-        } else {
-            captureToMemory(capture, settings, onSaved, onError)
+        when {
+            rawEnabled -> captureRawToFile(capture, onSaved, onError)
+            settings == ProcessingSettings.NATURAL -> captureToFile(capture, onSaved, onError)
+            else -> captureToMemory(capture, settings, onSaved, onError)
         }
     }
 
@@ -333,6 +447,66 @@ class CameraSession(
         } else {
             event.outputResults?.outputUri?.let { uri -> finished?.invoke(uri) }
         }
+    }
+
+    /**
+     * RAW capture (M6): a RAW+JPEG use case can only be saved through the
+     * two-`OutputFileOptions` overload — the single-file overload throws for
+     * `OUTPUT_FORMAT_RAW_JPEG`. CameraX then reports one `onImageSaved` per
+     * file, so the callback is guarded to surface exactly one completion (and
+     * one error) to the UI, and partial entries are cleaned up on failure.
+     */
+    private fun captureRawToFile(
+        capture: ImageCapture,
+        onSaved: (Uri) -> Unit,
+        onError: (Exception) -> Unit,
+    ) {
+        val jpegEntry = createEntry() ?: run {
+            onError(IllegalStateException("Could not create a MediaStore entry"))
+            return
+        }
+        val (jpegUri, jpegValues) = jpegEntry
+        val rawName = "CameraPlus_${System.currentTimeMillis()}.dng"
+        val rawValues = ContentValues().apply {
+            put(MediaStore.Images.Media.DISPLAY_NAME, rawName)
+            put(MediaStore.Images.Media.MIME_TYPE, "image/x-adobe-dng")
+            put(MediaStore.Images.Media.RELATIVE_PATH, "Pictures/Camera+")
+        }
+        val rawUri = context.contentResolver
+            .insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, rawValues)
+
+        val rawOptions = ImageCapture.OutputFileOptions
+            .Builder(context.contentResolver, rawUri ?: jpegUri, rawValues)
+            .build()
+        val jpegOptions = ImageCapture.OutputFileOptions
+            .Builder(context.contentResolver, jpegUri, jpegValues)
+            .build()
+
+        var completed = false
+        fun completeOnce(block: () -> Unit) {
+            if (completed) return
+            completed = true
+            block()
+        }
+
+        capture.takePicture(
+            rawOptions,
+            jpegOptions,
+            mainExecutor,
+            object : ImageCapture.OnImageSavedCallback {
+                override fun onImageSaved(outputFileResults: ImageCapture.OutputFileResults) {
+                    completeOnce {
+                        onSaved(outputFileResults.savedUri ?: jpegUri)
+                    }
+                }
+
+                override fun onError(exception: ImageCaptureException) {
+                    context.contentResolver.delete(jpegUri, null, null)
+                    rawUri?.let { uri -> context.contentResolver.delete(uri, null, null) }
+                    completeOnce { onError(exception) }
+                }
+            },
+        )
     }
 
     private fun createEntry(): Pair<Uri, ContentValues>? {
@@ -435,15 +609,20 @@ class CameraSession(
     }
 
     private fun bindInternal(provider: ProcessCameraProvider, previewView: PreviewView) {
-        zeroShutterLagSupported = detectZeroShutterLagSupport(provider)
+        val layout = planLenses(provider)
+        lensLayout = layout
+        // Bind the lens the user is on, defaulting to the reference (main)
+        // lens instead of "whatever the HAL lists first" (which is the 2x
+        // telephoto on several phones — the "stuck at 2x, no 0.6x/1x" bug).
+        val targetId = selectedCameraId ?: layout.referenceCameraId
+        if (targetId != selectedCameraId) selectedCameraId = targetId
+        zeroShutterLagSupported = cameraFlags[targetId]?.zeroShutterLag ?: false
         val captureMode = desiredCaptureMode()
 
         val preview = Preview.Builder().build().also {
             it.setSurfaceProvider(previewView.surfaceProvider)
         }
-        val selector = CameraSelector.Builder()
-            .requireLensFacing(lensFacing)
-            .build()
+        val selector = selectorForCamera(targetId)
 
         val useCases = mutableListOf<UseCase>(preview)
         var capture: ImageCapture? = null
@@ -467,7 +646,7 @@ class CameraSession(
             val captureBuilder = ImageCapture.Builder()
                 .setCaptureMode(captureMode)
                 .setOutputFormat(
-                    if (rawEnabled) {
+                    if (rawEnabled && cameraFlags[targetId]?.raw == true) {
                         ImageCapture.OUTPUT_FORMAT_RAW_JPEG
                     } else {
                         ImageCapture.OUTPUT_FORMAT_JPEG
@@ -483,15 +662,99 @@ class CameraSession(
         val sessionConfig = SessionConfig.Builder(*useCases.toTypedArray()).apply {
             if (lookEnabled) addEffect(ensureLookEffect())
         }.build()
-        boundCamera = provider.bindToLifecycle(lifecycleOwner, selector, sessionConfig)
+        boundCamera = try {
+            provider.bindToLifecycle(lifecycleOwner, selector, sessionConfig)
+        } catch (t: Throwable) {
+            // The chosen camera id can disappear (privacy toggle, concurrent
+            // use). Fall back to the platform default for this facing.
+            selectedCameraId = null
+            provider.bindToLifecycle(
+                lifecycleOwner,
+                CameraSelector.Builder().requireLensFacing(lensFacing).build(),
+                sessionConfig,
+            )
+        }
         imageCapture = capture
         videoCapture = video
         appliedCaptureMode = captureMode
         if (torchEnabled && mode == SessionMode.VIDEO) {
             boundCamera?.cameraControl?.enableTorch(true)
         }
+        pendingZoomRatio?.let { ratio -> applyZoomRatio(ratio) }
+        pendingZoomRatio = null
         onZslChanged(capture != null && captureMode == ImageCapture.CAPTURE_MODE_ZERO_SHUTTER_LAG)
         publishCapabilities(provider)
+    }
+
+    /** Binds exactly one camera id (plus the facing), not "any camera facing". */
+    private fun selectorForCamera(cameraId: String?): CameraSelector {
+        val builder = CameraSelector.Builder().requireLensFacing(lensFacing)
+        if (cameraId != null) {
+            builder.addCameraFilter(
+                CameraFilter { infos ->
+                    infos.filter { info ->
+                        Camera2CameraInfo.from(info).cameraId == cameraId
+                    }
+                },
+            )
+        }
+        return builder.build()
+    }
+
+    /**
+     * Reads what every camera of the current facing reports and hands it to
+     * [LensPlan]: focal lengths, sensor size, zoom range, plus the per-camera
+     * capability flags (zero shutter lag, RAW, AE step) that the rest of the
+     * session needs for the camera it is about to bind.
+     */
+    private fun planLenses(provider: ProcessCameraProvider): LensLayout {
+        val flags = mutableMapOf<String, CameraFlags>()
+        val specs = mutableListOf<LensSpec>()
+        for (info in provider.availableCameraInfos) {
+            val camera2 = Camera2CameraInfo.from(info)
+            if (camera2.getCameraCharacteristic(CameraCharacteristics.LENS_FACING) != lensFacing) {
+                continue
+            }
+            val focals = camera2.getCameraCharacteristic(
+                CameraCharacteristics.LENS_INFO_AVAILABLE_FOCAL_LENGTHS,
+            )?.toList()?.filter { it > 0f } ?: continue
+            val sensor = camera2.getCameraCharacteristic(
+                CameraCharacteristics.SENSOR_INFO_PHYSICAL_SIZE,
+            ) ?: continue
+            val pixels = camera2.getCameraCharacteristic(
+                CameraCharacteristics.SENSOR_INFO_PIXEL_ARRAY_SIZE,
+            )
+            val zoom = info.zoomState.value
+            val capabilities = camera2.getCameraCharacteristic(
+                CameraCharacteristics.REQUEST_AVAILABLE_CAPABILITIES,
+            ) ?: intArrayOf()
+            flags[camera2.cameraId] = CameraFlags(
+                zeroShutterLag = capabilities.contains(
+                    CameraCharacteristics.REQUEST_AVAILABLE_CAPABILITIES_PRIVATE_REPROCESSING,
+                ),
+                raw = capabilities.contains(
+                    CameraCharacteristics.REQUEST_AVAILABLE_CAPABILITIES_RAW,
+                ),
+                evStep = camera2.getCameraCharacteristic(
+                    CameraCharacteristics.CONTROL_AE_COMPENSATION_STEP,
+                )?.toFloat() ?: DEFAULT_EV_STEP,
+            )
+            specs += LensSpec(
+                cameraId = camera2.cameraId,
+                focalsMm = focals,
+                sensorWidthMm = sensor.width,
+                sensorHeightMm = sensor.height,
+                pixelCount = (pixels?.width?.toLong() ?: 0L) * (pixels?.height?.toLong() ?: 0L),
+                minZoom = zoom?.minZoomRatio ?: 1f,
+                maxZoom = zoom?.maxZoomRatio
+                    ?: camera2.getCameraCharacteristic(
+                        CameraCharacteristics.SCALER_AVAILABLE_MAX_DIGITAL_ZOOM,
+                    )?.toFloat()?.coerceAtLeast(1f) ?: 1f,
+            )
+        }
+        cameraFlags = flags
+        if (specs.isEmpty()) return LensPlan.single("0", minZoom = 1f, maxZoom = 1f)
+        return LensPlan.build(specs)
     }
 
     /** Manual values ride on the still capture requests through interop (M5). */
@@ -517,19 +780,6 @@ class CameraSession(
         fun <T> characteristic(key: CameraCharacteristics.Key<T>): T? =
             bound?.getCameraCharacteristic(key)
 
-        val mainFocal = characteristic(CameraCharacteristics.LENS_INFO_AVAILABLE_FOCAL_LENGTHS)
-            ?.firstOrNull()
-        val lensFocals = provider.availableCameraInfos
-            .filter { info ->
-                Camera2CameraInfo.from(info)
-                    .getCameraCharacteristic(CameraCharacteristics.LENS_FACING) == lensFacing
-            }
-            .mapNotNull { info ->
-                Camera2CameraInfo.from(info)
-                    .getCameraCharacteristic(CameraCharacteristics.LENS_INFO_AVAILABLE_FOCAL_LENGTHS)
-                    ?.firstOrNull()
-            }
-
         val sensitivity = characteristic(CameraCharacteristics.SENSOR_INFO_SENSITIVITY_RANGE)
         val exposure = characteristic(CameraCharacteristics.SENSOR_INFO_EXPOSURE_TIME_RANGE)
         val minimumFocus = characteristic(CameraCharacteristics.LENS_INFO_MINIMUM_FOCUS_DISTANCE)
@@ -539,19 +789,23 @@ class CameraSession(
         val opticalStabilization = characteristic(
             CameraCharacteristics.LENS_INFO_AVAILABLE_OPTICAL_STABILIZATION,
         )
-        val availableCapabilities = characteristic(
-            CameraCharacteristics.REQUEST_AVAILABLE_CAPABILITIES,
-        )
+        val boundId = bound?.cameraId
+        val flags = boundId?.let { cameraFlags[it] }
+        val layout = lensLayout
+        val liveZoom = boundCamera?.cameraInfo?.zoomState?.value
+        val evRange = boundCamera?.cameraInfo?.exposureState?.exposureCompensationRange
 
         onCapabilities(
             SessionCapabilities(
-                zoomStops = if (mainFocal != null && mainFocal > 0f) {
-                    LensZoomPlan.zoomStops(mainFocal, lensFocals)
-                } else {
-                    listOf(1f)
-                },
-                rawSupported = availableCapabilities
-                    ?.contains(CameraCharacteristics.REQUEST_AVAILABLE_CAPABILITIES_RAW) == true,
+                zoomStops = layout?.stops ?: listOf(1f),
+                minDisplayedZoom = layout?.minDisplayedZoom
+                    ?: liveZoom?.minZoomRatio
+                    ?: 1f,
+                maxDisplayedZoom = layout?.maxDisplayedZoom
+                    ?: liveZoom?.maxZoomRatio
+                    ?: 1f,
+                // RAW follows the lens in use, not just the first back camera.
+                rawSupported = flags?.raw == true,
                 stabilization = StabilizationProfile.choose(
                     previewSupported = videoStabilization?.contains(
                         android.hardware.camera2.CameraMetadata
@@ -569,6 +823,8 @@ class CameraSession(
                 isoRange = sensitivity?.let { IntRange(it.lower, it.upper) },
                 exposureRange = exposure?.let { LongRange(it.lower, it.upper) },
                 minFocusDistance = minimumFocus?.takeIf { it > 0f },
+                evRange = evRange?.let { IntRange(it.lower, it.upper) },
+                evStep = flags?.evStep ?: DEFAULT_EV_STEP,
             ),
         )
     }
@@ -586,23 +842,6 @@ class CameraSession(
             ImageCapture.CAPTURE_MODE_MINIMIZE_LATENCY
         }
 
-    /**
-     * Zero shutter lag needs a private reprocessing stream; probes the
-     * characteristics of the camera for the currently selected lens.
-     */
-    private fun detectZeroShutterLagSupport(provider: ProcessCameraProvider): Boolean {
-        val info = provider.availableCameraInfos.firstOrNull { cameraInfo ->
-            Camera2CameraInfo.from(cameraInfo)
-                .getCameraCharacteristic(CameraCharacteristics.LENS_FACING) == lensFacing
-        } ?: return false
-        val capabilities = Camera2CameraInfo.from(info)
-            .getCameraCharacteristic(CameraCharacteristics.REQUEST_AVAILABLE_CAPABILITIES)
-            ?: return false
-        return capabilities.any {
-            it == CameraCharacteristics.REQUEST_AVAILABLE_CAPABILITIES_PRIVATE_REPROCESSING
-        }
-    }
-
     private fun flashMode(): Int = if (flashEnabled) {
         ImageCapture.FLASH_MODE_ON
     } else {
@@ -611,6 +850,13 @@ class CameraSession(
 
     private fun Throwable.asException(): Exception = this as? Exception ?: Exception(this)
 }
+
+/** Per-camera capability flags read at bind time. */
+private data class CameraFlags(
+    val zeroShutterLag: Boolean,
+    val raw: Boolean,
+    val evStep: Float,
+)
 
 /** Video finalize carried an error; the partial entry is deleted first. */
 private class RecordingFailedException(code: Int, cause: Throwable?) :

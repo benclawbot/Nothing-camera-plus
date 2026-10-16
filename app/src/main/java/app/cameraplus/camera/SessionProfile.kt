@@ -10,9 +10,13 @@ enum class SessionMode { PHOTO, VIDEO, EXPERT }
  */
 data class SessionCapabilities(
     val zoomStops: List<Float> = listOf(1f),
+    val minDisplayedZoom: Float = 1f,
+    val maxDisplayedZoom: Float = 1f,
     val rawSupported: Boolean = false,
     val stabilization: StabilizationLevel = StabilizationLevel.NONE,
     val isoRange: IntRange? = null,
     val exposureRange: LongRange? = null,
     val minFocusDistance: Float? = null,
+    val evRange: IntRange? = null,
+    val evStep: Float = 1f / 3f,
 )

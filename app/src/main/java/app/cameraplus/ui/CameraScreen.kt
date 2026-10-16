@@ -9,6 +9,7 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -18,6 +19,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
@@ -39,6 +41,8 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -50,10 +54,13 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
@@ -98,25 +105,32 @@ fun CameraScreen() {
     val store = remember(context) { ProcessingSettingsStore(context) }
     var processing by remember { mutableStateOf(store.load()) }
     var showProcessing by remember { mutableStateOf(false) }
+    var showGallery by remember { mutableStateOf(false) }
     var guides by remember { mutableStateOf(CompositionGuides.NONE) }
     val roll = rememberSensorRoll()
-    var focusRipple by remember { mutableStateOf<Offset?>(null) }
+    var focusTarget by remember { mutableStateOf<Offset?>(null) }
+    var focusLocked by remember { mutableStateOf(false) }
 
-    LaunchedEffect(focusRipple) {
-        if (focusRipple != null) {
-            delay(600)
-            focusRipple = null
+    // A metering ring that is not locked goes away on its own, like the
+    // stock timer; a locked one stays until the next tap or mode switch.
+    LaunchedEffect(focusTarget, focusLocked) {
+        if (focusTarget != null && !focusLocked) {
+            delay(6000)
+            focusTarget = null
         }
     }
 
     var mode by remember { mutableStateOf(CameraMode.PHOTO) }
     var flashEnabled by remember { mutableStateOf(false) }
     var torchEnabled by remember { mutableStateOf(false) }
-    var inFlight by remember { mutableStateOf(0) }
+    var inFlight by remember { mutableIntStateOf(0) }
+    var shutterPulse by remember { mutableIntStateOf(0) }
     var status by remember { mutableStateOf<String?>(null) }
 
     var capabilities by remember { mutableStateOf(SessionCapabilities()) }
-    var zoom by remember { mutableStateOf(1f) }
+    var zoom by remember { mutableFloatStateOf(1f) }
+    var pinching by remember { mutableStateOf(false) }
+    var evIndex by remember { mutableIntStateOf(0) }
     var recording by remember { mutableStateOf(false) }
     var recordStartedAt by remember { mutableStateOf(0L) }
     var recordSeconds by remember { mutableStateOf(0) }
@@ -153,7 +167,10 @@ fun CameraScreen() {
             },
             onCapabilities = { published ->
                 capabilities = published
-                if (published.zoomStops.none { abs(it - zoom) < 0.01f }) zoom = 1f
+                // Reflect what the session actually bound (a lens switch
+                // rebinds; the zoom follows the new lens) instead of
+                // snapping back to 1x like the old stop-based code did.
+                zoom = session.currentDisplayedZoom()
             },
             onError = { error ->
                 status = error.message ?: "Camera unavailable"
@@ -225,21 +242,60 @@ fun CameraScreen() {
             modifier = Modifier
                 .fillMaxSize()
                 .pointerInput(Unit) {
-                    detectTapGestures { offset ->
-                        focusRipple = offset
-                        session.focusAndMeterAt(offset.x, offset.y)
+                    detectTapGestures(
+                        onTap = { offset ->
+                            focusTarget = offset
+                            focusLocked = false
+                            evIndex = session.currentExposureCompensationIndex()
+                            session.focusAndMeterAt(offset.x, offset.y)
+                        },
+                        onLongPress = { offset ->
+                            focusTarget = offset
+                            focusLocked = true
+                            session.focusAndMeterAt(offset.x, offset.y, lock = true)
+                        },
+                    )
+                }
+                .pointerInput(capabilities.maxDisplayedZoom) {
+                    detectTransformGestures { _, _, gestureZoom, _ ->
+                        // Gesture zoom is incremental, so this accumulates.
+                        zoom = session.setDisplayedZoom(zoom * gestureZoom) { error ->
+                            status = error.message ?: "Could not zoom"
+                        }
+                        pinching = true
                     }
                 },
         ) {
-            focusRipple?.let { point ->
-                Canvas(modifier = Modifier.fillMaxSize()) {
-                    drawCircle(
-                        color = White,
-                        radius = 26.dp.toPx(),
-                        center = point,
-                        style = Stroke(width = 2.dp.toPx()),
-                    )
-                }
+            focusTarget?.let { point ->
+                val density = LocalDensity.current
+                val ringHalfPx = with(density) { RING_SIZE_HALF.toPx() }
+                val sliderHalfPx = with(density) { SLIDER_HEIGHT_HALF.toPx() }
+                val sliderSidePx = with(density) { SLIDER_SIDE_GAP.toPx() }
+                FocusRing(
+                    locked = focusLocked,
+                    modifier = Modifier
+                        .align(Alignment.TopStart)
+                        .offset {
+                            IntOffset(
+                                (point.x - ringHalfPx).roundToInt(),
+                                (point.y - ringHalfPx).roundToInt(),
+                            )
+                        },
+                )
+                BrightnessSlider(
+                    index = evIndex,
+                    indexRange = capabilities.evRange,
+                    evStep = capabilities.evStep,
+                    onChange = { evIndex = session.setExposureCompensationIndex(it) },
+                    modifier = Modifier
+                        .align(Alignment.TopStart)
+                        .offset {
+                            IntOffset(
+                                (point.x + sliderSidePx).roundToInt(),
+                                (point.y - sliderHalfPx).roundToInt(),
+                            )
+                        },
+                )
             }
         }
 
@@ -339,10 +395,13 @@ fun CameraScreen() {
         ) {
             ZoomPill(
                 stops = capabilities.zoomStops,
-                selected = zoom,
+                current = zoom,
+                zoomable = capabilities.maxDisplayedZoom > capabilities.minDisplayedZoom,
                 onSelect = { stop ->
-                    zoom = stop
-                    session.setZoomRatio(stop)
+                    zoom = session.setDisplayedZoom(stop) { error ->
+                        status = error.message ?: "Could not switch lens"
+                    }
+                    pinching = false
                 },
             )
             if (capabilities.zoomStops.size > 1) Spacer(Modifier.height(14.dp))
@@ -450,7 +509,7 @@ fun CameraScreen() {
                 IconCircle(
                     imageVector = Icons.Outlined.PhotoLibrary,
                     contentDescription = "Gallery",
-                    onClick = { status = "Gallery view is not part of this build" },
+                    onClick = { showGallery = true },
                 )
                 if (mode == CameraMode.VIDEO) {
                     RecordButton(
@@ -487,11 +546,14 @@ fun CameraScreen() {
                 } else {
                     ShutterButton(
                         capturing = inFlight > 0,
-                        enabled = true,
+                        enabled = inFlight < MAX_IN_FLIGHT,
+                        pulse = shutterPulse,
                         onClick = {
-                            // Captures queue: the shutter stays armed while
-                            // previous frames are still being written.
+                            // Feedback is immediate; the file write happens in
+                            // the background and the shutter stays armed, so
+                            // burst tapping feels instant like the stock app.
                             inFlight++
+                            shutterPulse++
                             session.capture(
                                 settings = processing,
                                 onSaved = {
@@ -532,41 +594,70 @@ fun CameraScreen() {
                 onDismiss = { showProcessing = false },
             )
         }
+
+        if (showGallery) {
+            GalleryScreen(onDismiss = { showGallery = false })
+        }
     }
 }
 
-/** Lens/zoom stops derived from the physical focals (M4). Hidden on single-lens. */
+/**
+ * Lens stops plus the live zoom readout (v1.1).
+ *
+ * The stops are the physical lenses the plan found (0.6x, 1x, 2x, …) with a
+ * short digital ladder; between them the value follows the pinch gesture, so
+ * the number above the pill is always the zoom the camera is really at.
+ * Hidden only when the camera offers no zoom range at all.
+ */
 @Composable
 private fun ZoomPill(
     stops: List<Float>,
-    selected: Float,
+    current: Float,
+    zoomable: Boolean,
     onSelect: (Float) -> Unit,
 ) {
-    if (stops.size < 2) return
-    Row(
-        modifier = Modifier
-            .clip(CircleShape)
-            .background(Color(0x33000000))
-            .padding(horizontal = 6.dp, vertical = 4.dp),
-        horizontalArrangement = Arrangement.spacedBy(2.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        stops.forEach { stop ->
-            val active = abs(stop - selected) < 0.01f
-            Box(
+    if (stops.isEmpty()) return
+    val currentLabel = LensZoomPlan.stopLabel(current)
+    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+        if (zoomable) {
+            Text(
+                text = currentLabel,
+                color = White,
+                fontFamily = FontFamily.Monospace,
+                style = MaterialTheme.typography.labelMedium,
                 modifier = Modifier
+                    .padding(bottom = 4.dp)
                     .clip(CircleShape)
-                    .background(if (active) Color(0x66FFFFFF) else Color.Transparent)
-                    .clickable { onSelect(stop) }
-                    .padding(horizontal = 10.dp, vertical = 6.dp),
-                contentAlignment = Alignment.Center,
-            ) {
-                Text(
-                    text = LensZoomPlan.stopLabel(stop),
-                    color = if (active) White else DimWhite,
-                    fontFamily = FontFamily.Monospace,
-                    style = MaterialTheme.typography.labelSmall,
-                )
+                    .background(Color(0x59000000))
+                    .padding(horizontal = 10.dp, vertical = 3.dp),
+            )
+        }
+        if (stops.size < 2 && !zoomable) return@Column
+        Row(
+            modifier = Modifier
+                .clip(CircleShape)
+                .background(Color(0x33000000))
+                .padding(horizontal = 6.dp, vertical = 4.dp),
+            horizontalArrangement = Arrangement.spacedBy(2.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            stops.forEach { stop ->
+                val active = abs(stop - current) < 0.02f
+                Box(
+                    modifier = Modifier
+                        .clip(CircleShape)
+                        .background(if (active) Color(0x66FFFFFF) else Color.Transparent)
+                        .clickable { onSelect(stop) }
+                        .padding(horizontal = 10.dp, vertical = 6.dp),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Text(
+                        text = LensZoomPlan.stopLabel(stop),
+                        color = if (active) White else DimWhite,
+                        fontFamily = FontFamily.Monospace,
+                        style = MaterialTheme.typography.labelSmall,
+                    )
+                }
             }
         }
     }
@@ -759,13 +850,16 @@ private fun ModeSelector(
 private fun ShutterButton(
     capturing: Boolean,
     enabled: Boolean,
+    pulse: Int,
     onClick: () -> Unit,
 ) {
     val color = if (enabled) White else FaintWhite
+    val scale = if (pulse % 2 == 0) 1f else 0.92f
     Box(
         modifier = Modifier
             .size(78.dp)
-            .clickable(enabled = enabled && !capturing, onClick = onClick),
+            .graphicsLayer { scaleX = scale; scaleY = scale }
+            .clickable(enabled = enabled, onClick = onClick),
         contentAlignment = Alignment.Center,
     ) {
         Canvas(modifier = Modifier.fillMaxSize()) {
@@ -852,3 +946,11 @@ private fun focusText(gauge: Float, minimumFocusDistance: Float?): String {
     val meters = if (diopters > 0f) 1f / diopters else Float.POSITIVE_INFINITY
     return String.format(Locale.US, "%.2fm", meters)
 }
+
+/** Layout constants for the focus ring and the brightness slider. */
+private val RING_SIZE_HALF = 27.dp
+private val SLIDER_HEIGHT_HALF = 95.dp
+private val SLIDER_SIDE_GAP = 64.dp
+
+/** How many captures may be writing at once before the shutter stops arming. */
+private const val MAX_IN_FLIGHT = 4
