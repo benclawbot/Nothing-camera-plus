@@ -26,4 +26,26 @@ class CaptureProfileTest {
             CaptureProfile.usesZeroShutterLag(zslSupported = false, flashEnabled = false)
         )
     }
+
+    @Test
+    fun fallsBackForRawCaptures() {
+        assertFalse(
+            CaptureProfile.usesZeroShutterLag(
+                zslSupported = true,
+                flashEnabled = false,
+                rawEnabled = true,
+            )
+        )
+    }
+
+    @Test
+    fun fallsBackForManualControls() {
+        assertFalse(
+            CaptureProfile.usesZeroShutterLag(
+                zslSupported = true,
+                flashEnabled = false,
+                manualControlsActive = true,
+            )
+        )
+    }
 }

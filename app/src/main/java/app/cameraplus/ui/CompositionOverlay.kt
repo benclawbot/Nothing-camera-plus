@@ -6,19 +6,33 @@ import android.hardware.SensorEvent
 import android.hardware.SensorEventListener
 import android.hardware.SensorManager
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.rotate
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import app.cameraplus.camera.LevelMath
+import app.cameraplus.ui.theme.White
 
 /** Composition guides, cycled from the top bar. Off by default. */
 enum class CompositionGuides {
@@ -65,6 +79,52 @@ fun GuideOverlay(guides: CompositionGuides, modifier: Modifier = Modifier) {
 
             CompositionGuides.NONE -> Unit
         }
+    }
+}
+
+/**
+ * Stabilization crop indication (M4): hairlines show the approximate frame
+ * that stabilization keeps, so the loss is visible instead of implicit. The
+ * real crop is camera-managed and not exposed through public APIs;
+ * [cropFraction] is an estimate from
+ * [app.cameraplus.camera.StabilizationProfile.estimatedCrop].
+ */
+@Composable
+fun StabilizationCropOverlay(
+    cropFraction: Float,
+    label: String,
+    modifier: Modifier = Modifier,
+) {
+    if (cropFraction <= 0f) return
+    BoxWithConstraints(modifier = modifier) {
+        val insetX = maxWidth * (cropFraction / 2f)
+        val insetY = maxHeight * (cropFraction / 2f)
+        Canvas(modifier = Modifier.fillMaxSize()) {
+            val insetPxX = size.width * cropFraction / 2f
+            val insetPxY = size.height * cropFraction / 2f
+            drawRect(
+                color = Color(0x59FFFFFF),
+                topLeft = Offset(insetPxX, insetPxY),
+                size = Size(
+                    size.width - 2f * insetPxX,
+                    size.height - 2f * insetPxY,
+                ),
+                style = Stroke(width = 1.dp.toPx()),
+            )
+        }
+        Text(
+            text = label,
+            color = White,
+            fontFamily = FontFamily.Monospace,
+            style = MaterialTheme.typography.labelSmall,
+            modifier = Modifier
+                .align(Alignment.BottomStart)
+                .padding(start = insetX, bottom = insetY)
+                .padding(8.dp)
+                .clip(CircleShape)
+                .background(Color(0x99000000))
+                .padding(horizontal = 10.dp, vertical = 6.dp),
+        )
     }
 }
 
