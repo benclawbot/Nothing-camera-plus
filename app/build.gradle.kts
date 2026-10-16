@@ -13,8 +13,8 @@ android {
         // 33+: the preview-parity effect reads SurfaceRequest.surface directly.
         minSdk = 33
         targetSdk = 35
-        versionCode = 2
-        versionName = "1.0.0"
+        versionCode = 3
+        versionName = "1.1.0-dev"
     }
 
     buildTypes {

@@ -25,6 +25,8 @@ Details in [ROADMAP.md](ROADMAP.md).
 
 **Parity work in progress:** local development now includes an in-app gallery with delete/favorite/share, exposure/focus controls, lens and zoom planning, aspect ratios, max JPEG selection, Auto flash, front-camera mirror, geotagging, watermark options, shutter sound, volume-key shutter, white balance, clean-room color looks, QR scanning, video quality/fps requests and video snapshots. It also tries CameraX BOKEH/NIGHT/HDR/FACE_RETOUCH extensions when a device advertises them, with bounded software fallbacks for still modes; slow motion/time lapse use Camera2. These changes are not in the v1.0.0 APK linked below and are not released. The original-app feature inventory, current status and limitations are tracked in [notes/FEATURE-COVERAGE.md](notes/FEATURE-COVERAGE.md); device checks are in [notes/PLAN-v1.1.md](notes/PLAN-v1.1.md).
 
+For device testing of the unreleased worktree, build `:app:assembleDebug`; its current candidate is `app/build/outputs/apk/debug/app-debug.apk` (`1.1.0-dev`, versionCode 3). It is not attached to the v1.0.0 release.
+
 ## Download
 
 - [`dist/cameraplus-1.0.0-debug.apk`](dist/cameraplus-1.0.0-debug.apk) — debug-signed, for Android 13+ (`minSdk 33`). The same file is attached to the [v1.0.0 release](https://github.com/benclawbot/Nothing-camera-plus/releases/tag/v1.0.0).
