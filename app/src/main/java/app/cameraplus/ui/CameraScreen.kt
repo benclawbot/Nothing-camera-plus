@@ -47,6 +47,7 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import app.cameraplus.camera.CameraSession
+import app.cameraplus.settings.ProcessingSettingsStore
 import app.cameraplus.ui.theme.Black
 import app.cameraplus.ui.theme.DimWhite
 import app.cameraplus.ui.theme.FaintWhite
@@ -70,6 +71,10 @@ fun CameraScreen() {
             scaleType = PreviewView.ScaleType.FILL_CENTER
         }
     }
+
+    val store = remember(context) { ProcessingSettingsStore(context) }
+    var processing by remember { mutableStateOf(store.load()) }
+    var showProcessing by remember { mutableStateOf(false) }
 
     var mode by remember { mutableStateOf(CameraMode.PHOTO) }
     var flashEnabled by remember { mutableStateOf(false) }
@@ -130,7 +135,7 @@ fun CameraScreen() {
                     tint = White,
                 )
             }
-            IconButton(onClick = { status = "Processing controls arrive in a later milestone" }) {
+            IconButton(onClick = { showProcessing = true }) {
                 Icon(
                     imageVector = Icons.Outlined.Settings,
                     contentDescription = "Processing settings",
@@ -208,6 +213,17 @@ fun CameraScreen() {
                     },
                 )
             }
+        }
+
+        if (showProcessing) {
+            ProcessingSheet(
+                settings = processing,
+                onSettingsChange = { updated ->
+                    processing = updated
+                    store.save(updated)
+                },
+                onDismiss = { showProcessing = false },
+            )
         }
     }
 }

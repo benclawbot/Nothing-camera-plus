@@ -24,10 +24,11 @@ Goal: the frame is captured at the moment of the tap; processing (HDR, denoise) 
 
 Goal: stop forcing over-processing; make the saved image match the preview.
 
-- [ ] `Natural` preset: neutral processing intent, as close to sensor output as practical
-- [ ] Adjustable strength for: sharpening, noise reduction, HDR, skin smoothing
+- [x] `Natural` preset: neutral processing intent, selectable from the processing sheet
+- [x] Adjustable strength for: sharpening, noise reduction, HDR, skin smoothing (settings sheet)
+- [x] Persisted user settings (clamped on load)
+- [ ] Apply the intent to saved images (post-processing pipeline)
 - [ ] Parity between preview and saved output (same intent applied to both)
-- [ ] Persisted user settings
 
 ## M4 — Video stabilization and lens switching
 
