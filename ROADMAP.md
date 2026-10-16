@@ -11,16 +11,16 @@ The requirements below are distilled from publicly posted user feedback. All imp
 - [x] Minimal monochrome UI shell
 - [x] Build validation (`assembleDebug`) and JVM unit tests
 
-## M2 — Instant shutter
+## M2 — Instant shutter (done)
 
 Goal: the frame is captured at the moment of the tap; processing (HDR, denoise) finishes afterwards while the camera stays ready for the next shot. Aimed at moving subjects: kids, pets, candid shots.
 
-- [x] Capture the frame on tap without waiting for the processing pipeline (zero-shutter-lag session where the device supports it; flash toggles back to the standard path)
-- [ ] Move HDR/post-processing to a background step after the frame is buffered
+- [x] Capture the frame on tap without waiting for the processing pipeline (zero-shutter-lag session where the device supports it; flash, RAW and manual controls toggle back to the standard path)
+- [x] Move HDR/post-processing to a background step after the frame is buffered (the frame is buffered in memory, processed off the main thread, then written)
 - [x] Keep the shutter armed during processing; no blocked next capture (captures queue, the shutter never locks)
 - [x] Honest in-progress state in the UI (shutter reflects pending saves)
 
-## M3 — Control over the finished photo
+## M3 — Control over the finished photo (done)
 
 Goal: stop forcing over-processing; make the saved image match the preview.
 
@@ -28,23 +28,23 @@ Goal: stop forcing over-processing; make the saved image match the preview.
 - [x] Adjustable strength for: sharpening, noise reduction, HDR, skin smoothing (settings sheet)
 - [x] Persisted user settings (clamped on load)
 - [x] Apply the intent to saved images (software pipeline for stills: full-resolution decode, process, encode, off the main thread)
-- [ ] Parity between preview and saved output (same intent applied to both)
+- [x] Parity between preview and saved output (same intent applied to both; a GL look effect on the preview mirrors the still pipeline's tone curve and blend factors, with GLSL approximations for the spatial steps — the saved image stays the authority)
 
-## M4 — Video stabilization and lens switching
+## M4 — Video stabilization and lens switching (done)
 
-- [ ] Reduce jitter and dropped frames in video
-- [ ] Smooth focus/exposure transitions when switching lenses
-- [ ] Visual indication of the stabilization crop (show what is lost)
+- [x] Reduce jitter and dropped frames in video (platform stabilization requested through CameraX, capability-detected per device: preview stabilization > standard > optical; toggleable)
+- [x] Smooth focus/exposure transitions when switching lenses (zoom-ratio switching resolved by the platform — no session rebind, so recording keeps running)
+- [x] Visual indication of the stabilization crop (show what is lost) (labelled estimate overlay; the real crop is camera-managed and not exposed through public APIs)
 
-## M5 — Composition aids without clutter
+## M5 — Composition aids without clutter (done)
 
 - [x] Horizontal level indicator (gravity sensor; line counter-rotates and brightens when level)
 - [x] Additional composition guides (rule of thirds, center, diagonals — cycled from the top bar, off by default)
 - [x] Quick access to exposure and focus without leaving Auto (tap-to-focus / tap-to-meter)
-- [ ] Expert controls remain available, opt-in
+- [x] Expert controls remain available, opt-in (EXPERT mode: manual ISO, exposure time and focus with AUTO positions; never on the Auto shutter path)
 
-## M6 — RAW where the hardware allows
+## M6 — RAW where the hardware allows (done)
 
-- [ ] Full-resolution RAW capture where supported
-- [ ] Broader Camera2 interop for enthusiast workflows (e.g. editor round-trips)
-- [ ] Minimal expert RAW controls
+- [x] Full-resolution RAW capture where supported (RAW_JPEG: DNG plus companion JPEG, gated on the raw capability)
+- [x] Broader Camera2 interop for enthusiast workflows (manual ISO/exposure/focus ride the capture request through `Camera2Interop`; an editor round-trip is not in scope for this build)
+- [x] Minimal expert RAW controls (a single RAW toggle in EXPERT mode, disabled honestly when the hardware does not report the raw capability)
