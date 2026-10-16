@@ -5,6 +5,9 @@ import android.content.ContentValues
 import android.content.Context
 import android.content.pm.PackageManager
 import android.graphics.ImageFormat
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
+import android.graphics.Matrix
 import android.hardware.camera2.CameraCharacteristics
 import android.hardware.camera2.CaptureRequest
 import android.net.Uri
@@ -88,6 +91,7 @@ class CameraSession(
         }
 
     private var cameraProvider: ProcessCameraProvider? = null
+    private var suspended = false
     private var boundCamera: Camera? = null
     private var imageCapture: ImageCapture? = null
     private var videoCapture: VideoCapture<Recorder>? = null
@@ -128,6 +132,7 @@ class CameraSession(
         onCapabilities: (SessionCapabilities) -> Unit = {},
         onError: (Exception) -> Unit = {},
     ) {
+        suspended = false
         boundPreviewView = previewView
         this.onZslChanged = onZslChanged
         this.onCapabilities = onCapabilities
@@ -144,6 +149,7 @@ class CameraSession(
     }
 
     fun unbind() {
+        suspended = true
         activeRecording?.close()
         activeRecording = null
         onVideoFinished = null
@@ -158,7 +164,11 @@ class CameraSession(
      * Switches the session shape: PHOTO/EXPERT bind ImageCapture, VIDEO binds
      * the Recorder. Manual controls and RAW only shape still capture.
      */
-    fun setMode(newMode: SessionMode, onError: (Exception) -> Unit = {}) {
+    fun setMode(
+        newMode: SessionMode,
+        onError: (Exception) -> Unit = {},
+        bindAfterChange: Boolean = true,
+    ) {
         if (newMode == mode) return
         if (isRecording()) {
             onError(IllegalStateException("Stop recording before switching modes"))
@@ -166,7 +176,7 @@ class CameraSession(
         }
         mode = newMode
         if (mode != SessionMode.VIDEO) torchEnabled = false
-        rebind(onError)
+        if (bindAfterChange) rebind(onError)
     }
 
     fun flipLens(onError: (Exception) -> Unit = {}) {
@@ -432,6 +442,101 @@ class CameraSession(
         }
     }
 
+    /** A downsampled, upright ARGB frame for panorama/night/portrait math. */
+    data class PixelFrame(val pixels: IntArray, val width: Int, val height: Int)
+
+    /**
+     * Captures one JPEG in memory, downsamples it before allocating pixel
+     * buffers, applies the JPEG rotation, and hands an ARGB frame to [onFrame].
+     * Used by the clean-room panorama/night/portrait modes; those deliberately
+     * work at a bounded resolution rather than risking a 50 MP heap crash.
+     */
+    fun capturePixelFrame(
+        maxDimension: Int,
+        onFrame: (PixelFrame) -> Unit,
+        onError: (Exception) -> Unit,
+    ) {
+        require(maxDimension > 0) { "maxDimension must be positive" }
+        val capture = imageCapture ?: run {
+            onError(IllegalStateException("Camera is not ready"))
+            return
+        }
+        capture.takePicture(mainExecutor, object : ImageCapture.OnImageCapturedCallback() {
+            override fun onCaptureSuccess(image: ImageProxy) {
+                val captured = runCatching {
+                    image.toJpegBytes() to image.imageInfo.rotationDegrees
+                }
+                image.close()
+                val jpeg = captured.getOrNull()?.first
+                val rotation = captured.getOrNull()?.second ?: 0
+                if (jpeg == null) {
+                    onError(
+                        captured.exceptionOrNull()?.asException()
+                            ?: IllegalStateException("Capture did not produce a JPEG frame"),
+                    )
+                    return
+                }
+                ioExecutor.execute {
+                    try {
+                        val frame = decodePixelFrame(jpeg, rotation, maxDimension)
+                            ?: throw IllegalStateException("Could not decode the captured frame")
+                        mainExecutor.execute { onFrame(frame) }
+                    } catch (t: Throwable) {
+                        mainExecutor.execute { onError(t.asException()) }
+                    }
+                }
+            }
+
+            override fun onError(exception: ImageCaptureException) {
+                onError(exception)
+            }
+        })
+    }
+
+    /** Saves a processed ARGB frame to Pictures/Camera+ as a JPEG. */
+    fun saveArgbJpeg(
+        pixels: IntArray,
+        width: Int,
+        height: Int,
+        namePrefix: String,
+        onSaved: (Uri) -> Unit,
+        onError: (Exception) -> Unit,
+    ) {
+        if (width <= 0 || height <= 0 || pixels.size < width * height) {
+            onError(IllegalArgumentException("Invalid output frame dimensions"))
+            return
+        }
+        val name = "${namePrefix}_${System.currentTimeMillis()}"
+        val values = ContentValues().apply {
+            put(MediaStore.Images.Media.DISPLAY_NAME, "$name.jpg")
+            put(MediaStore.Images.Media.MIME_TYPE, "image/jpeg")
+            put(MediaStore.Images.Media.RELATIVE_PATH, "Pictures/Camera+")
+        }
+        val uri = context.contentResolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values)
+            ?: run {
+                onError(IllegalStateException("Could not create a MediaStore entry"))
+                return
+            }
+        ioExecutor.execute {
+            var bitmap: Bitmap? = null
+            try {
+                val image = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
+                bitmap = image
+                image.setPixels(pixels, 0, width, 0, 0, width, height)
+                val saved = context.contentResolver.openOutputStream(uri)?.use { out ->
+                    image.compress(Bitmap.CompressFormat.JPEG, 95, out)
+                } ?: false
+                if (!saved) throw IllegalStateException("Could not encode the processed JPEG")
+                mainExecutor.execute { onSaved(uri) }
+            } catch (t: Throwable) {
+                context.contentResolver.delete(uri, null, null)
+                mainExecutor.execute { onError(t.asException()) }
+            } finally {
+                bitmap?.recycle()
+            }
+        }
+    }
+
     /**
      * Starts a video recording into Movies/Camera+. Returns `false` when the
      * session is not ready; validation and errors surface through [onError].
@@ -517,15 +622,22 @@ class CameraSession(
         }
         val rawUri = context.contentResolver
             .insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, rawValues)
+        if (rawUri == null) {
+            context.contentResolver.delete(jpegUri, null, null)
+            onError(IllegalStateException("Could not create a DNG MediaStore entry"))
+            return
+        }
 
         val rawOptions = ImageCapture.OutputFileOptions
-            .Builder(context.contentResolver, rawUri ?: jpegUri, rawValues)
+            .Builder(context.contentResolver, rawUri, rawValues)
             .build()
         val jpegOptions = ImageCapture.OutputFileOptions
             .Builder(context.contentResolver, jpegUri, jpegValues)
             .build()
 
         var completed = false
+        var rawSaved = false
+        var jpegSavedUri: Uri? = null
         fun completeOnce(block: () -> Unit) {
             if (completed) return
             completed = true
@@ -538,14 +650,21 @@ class CameraSession(
             mainExecutor,
             object : ImageCapture.OnImageSavedCallback {
                 override fun onImageSaved(outputFileResults: ImageCapture.OutputFileResults) {
-                    completeOnce {
-                        onSaved(outputFileResults.savedUri ?: jpegUri)
+                    // CameraX calls once per output. Wait until both files are
+                    // confirmed before telling the UI the pair is complete;
+                    // the returned gallery item must always be the JPEG.
+                    when (outputFileResults.imageFormat) {
+                        ImageFormat.RAW_SENSOR -> rawSaved = true
+                        ImageFormat.JPEG -> jpegSavedUri = outputFileResults.savedUri ?: jpegUri
+                    }
+                    if (rawSaved && jpegSavedUri != null) {
+                        completeOnce { onSaved(jpegSavedUri ?: jpegUri) }
                     }
                 }
 
                 override fun onError(exception: ImageCaptureException) {
                     context.contentResolver.delete(jpegUri, null, null)
-                    rawUri?.let { uri -> context.contentResolver.delete(uri, null, null) }
+                    context.contentResolver.delete(rawUri, null, null)
                     completeOnce { onError(exception) }
                 }
             },
@@ -651,7 +770,66 @@ class CameraSession(
         return bytes
     }
 
+    private fun decodePixelFrame(
+        jpeg: ByteArray,
+        rotationDegrees: Int,
+        maxDimension: Int,
+    ): PixelFrame? {
+        val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        BitmapFactory.decodeByteArray(jpeg, 0, jpeg.size, bounds)
+        if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return null
+
+        var sample = 1
+        while (maxOf(bounds.outWidth, bounds.outHeight) / sample > maxDimension * 2) {
+            sample *= 2
+        }
+        val options = BitmapFactory.Options().apply {
+            inPreferredConfig = Bitmap.Config.ARGB_8888
+            inSampleSize = sample
+        }
+        var bitmap = BitmapFactory.decodeByteArray(jpeg, 0, jpeg.size, options) ?: return null
+        try {
+            val normalizedRotation = ((rotationDegrees % 360) + 360) % 360
+            if (normalizedRotation != 0) {
+                val matrix = Matrix().apply { postRotate(normalizedRotation.toFloat()) }
+                val rotated = Bitmap.createBitmap(
+                    bitmap,
+                    0,
+                    0,
+                    bitmap.width,
+                    bitmap.height,
+                    matrix,
+                    true,
+                )
+                if (rotated !== bitmap) {
+                    bitmap.recycle()
+                    bitmap = rotated
+                }
+            }
+            val longest = maxOf(bitmap.width, bitmap.height)
+            if (longest > maxDimension) {
+                val scale = maxDimension.toFloat() / longest
+                val scaled = Bitmap.createScaledBitmap(
+                    bitmap,
+                    (bitmap.width * scale).toInt().coerceAtLeast(1),
+                    (bitmap.height * scale).toInt().coerceAtLeast(1),
+                    true,
+                )
+                if (scaled !== bitmap) {
+                    bitmap.recycle()
+                    bitmap = scaled
+                }
+            }
+            val pixels = IntArray(bitmap.width * bitmap.height)
+            bitmap.getPixels(pixels, 0, bitmap.width, 0, 0, bitmap.width, bitmap.height)
+            return PixelFrame(pixels, bitmap.width, bitmap.height)
+        } finally {
+            if (!bitmap.isRecycled) bitmap.recycle()
+        }
+    }
+
     private fun rebind(onError: (Exception) -> Unit = {}) {
+        if (suspended) return
         val provider = cameraProvider ?: return
         val previewView = boundPreviewView ?: return
         try {
@@ -662,6 +840,7 @@ class CameraSession(
     }
 
     private fun bindInternal(provider: ProcessCameraProvider, previewView: PreviewView) {
+        suspended = false
         val layout = planLenses(provider)
         lensLayout = layout
         // Bind the lens the user is on, defaulting to the reference (main)
@@ -669,6 +848,7 @@ class CameraSession(
         // telephoto on several phones — the "stuck at 2x, no 0.6x/1x" bug).
         val targetId = selectedCameraId ?: layout.referenceCameraId
         if (targetId != selectedCameraId) selectedCameraId = targetId
+        if (rawEnabled && cameraFlags[targetId]?.raw != true) rawEnabled = false
         zeroShutterLagSupported = cameraFlags[targetId]?.zeroShutterLag ?: false
         val captureMode = desiredCaptureMode()
 

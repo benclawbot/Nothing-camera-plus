@@ -4,6 +4,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import kotlin.math.abs
 
 class LensPlanTest {
 
@@ -104,6 +105,30 @@ class LensPlanTest {
         assertEquals("0", target.cameraId)
         assertEquals(0.6f, target.zoomRatio, 1e-3f)
         assertFalse(target.needsRebind)
+    }
+
+    @Test
+    fun logicalCameraFocalListProvidesPointSixOneAndTwoStops() {
+        val logical = listOf(
+            LensSpec(
+                cameraId = "logical-back",
+                focalsMm = listOf(3.5f, 5.9f, 11.8f),
+                sensorWidthMm = 7.6f,
+                sensorHeightMm = 5.7f,
+                pixelCount = 50_000_000L,
+                minZoom = 0.6f,
+                maxZoom = 20f,
+            ),
+        )
+        val layout = LensPlan.build(logical)
+        assertTrue(layout.stops.any { abs(it - 0.6f) < 0.06f })
+        assertTrue(layout.stops.any { abs(it - 1f) < 0.06f })
+        assertTrue(layout.stops.any { abs(it - 2f) < 0.06f })
+
+        val ultrawide = layout.targetFor(0.6f, currentCameraId = "logical-back")
+        assertEquals("logical-back", ultrawide.cameraId)
+        assertEquals(0.6f, ultrawide.zoomRatio, 1e-3f)
+        assertFalse(ultrawide.needsRebind)
     }
 
     @Test

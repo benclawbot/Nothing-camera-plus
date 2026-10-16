@@ -21,7 +21,9 @@ All planned milestones are implemented in v1.0.0 and build-validated:
 
 Details in [ROADMAP.md](ROADMAP.md).
 
-**Validation honesty:** this project is validated by compilation (`assembleDebug`) and 32 JVM unit tests only. It has not been run on a physical device yet; capture latency, processing quality, the GL preview look, video stabilization behaviour, lens transitions, and RAW output are unverified until it runs on hardware.
+**Validation honesty:** the v1.0.0 release was validated by compilation and JVM tests. The current local parity work builds and passes 166 JVM tests, but has not been run on a physical device; capture latency, camera enumeration, high-speed recording, processing quality, video stabilization, lens transitions, gallery visibility and RAW output remain unverified on hardware.
+
+**Parity work in progress:** local development now includes an in-app gallery, exposure/focus controls, wider zoom planning, self-timer, video quality tiers, and software/camera2 prototypes for slow motion, time lapse, panorama, portrait and night capture. These changes are not part of the v1.0.0 APK linked below and are not yet released. The original-app feature-by-feature status and honest limitations are tracked in [notes/FEATURE-COVERAGE.md](notes/FEATURE-COVERAGE.md); the v1.1 implementation and device-test checklist is in [notes/PLAN-v1.1.md](notes/PLAN-v1.1.md).
 
 ## Download
 
@@ -64,7 +66,7 @@ Requirements:
 
 ```bash
 ./gradlew :app:assembleDebug       # debug APK
-./gradlew :app:testDebugUnitTest   # unit tests (32)
+./gradlew :app:testDebugUnitTest   # JVM unit tests (166)
 ```
 
 `local.properties` (git-ignored) points at your SDK:
@@ -78,16 +80,19 @@ Runtime requirement: Android 13 or newer (`minSdk 33` — the preview-parity GL 
 ## Layout
 
 - `app/src/main/java/app/cameraplus/`
-  - `camera/CameraSession.kt` — CameraX binding: modes, still capture, video, MediaStore output
+  - `camera/CameraSession.kt` — CameraX binding: still capture, video, RAW, focus/EV and MediaStore output
+  - `camera/Camera2Recorder.kt` — Camera2 high-speed slow motion and MediaRecorder time lapse
+  - `camera/LensPlan.kt`, `camera/RecorderPlan.kt` — lens/zoom and recorder planning math
+  - `camera/Panorama*`, `camera/NightMerger.kt`, `camera/PortraitRenderer.kt` — bounded software mode prototypes
   - `camera/LookEffect.kt` — GL preview look (M3.3 preview parity)
   - `camera/VideoProfile.kt` — stabilization policy and zoom/lens plan (M4)
   - `camera/ManualControlPlan.kt` — manual-control gauge math (M5)
   - `camera/SessionProfile.kt` — session modes and the camera capability model
   - `camera/CaptureProfile.kt`, `camera/LevelMath.kt` — pure policy math
-  - `ui/CameraScreen.kt`, `ui/CompositionOverlay.kt`, `ui/ProcessingSheet.kt`, `ui/CameraPlusApp.kt`, `ui/theme/Theme.kt` — Compose UI
+  - `ui/CameraScreen.kt`, `ui/GalleryScreen.kt`, `ui/FocusControls.kt`, `ui/CompositionOverlay.kt`, `ui/ProcessingSheet.kt`, `ui/CameraPlusApp.kt`, `ui/theme/Theme.kt` — Compose UI
   - `processing/` — software still pipeline (`ImageProcessor` pure math, `JpegProcessor` glue)
   - `settings/ProcessingSettings.kt` — processing-intent model
-- `app/src/test/` — JVM unit tests (32)
+- `app/src/test/` — JVM unit tests (166)
 - `dist/` — built APK
 
 ## License

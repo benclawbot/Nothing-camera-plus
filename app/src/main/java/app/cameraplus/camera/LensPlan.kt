@@ -50,6 +50,8 @@ data class LensLayout(
     val referenceCameraId: String,
     val lenses: List<Lens>,
     val stops: List<Float>,
+    /** Extra physical focal stops exposed behind a single logical camera. */
+    val opticalStops: List<Float> = emptyList(),
 ) {
     val minDisplayedZoom: Float get() = lenses.minOf { it.minDisplayedZoom }
     val maxDisplayedZoom: Float get() = lenses.maxOf { it.maxDisplayedZoom }
@@ -105,9 +107,8 @@ data class LensLayout(
          * that is already bound first (no needless rebind), then the widest
          * lens (least crop).
          *
-         * Written as an explicit `Comparator` on purpose: `compareBy` with
-         * bare lambdas resolves to the SAM overload and silently becomes
-         * nonsense ordering.
+         * Written explicitly so the priority is unambiguous: current camera
+         * first, then the smallest (widest) base stop.
          */
         private fun preference(currentCameraId: String?): Comparator<Lens> =
             Comparator { a, b ->
@@ -145,7 +146,6 @@ object LensPlan {
     const val FULL_FRAME_DIAGONAL_MM = 43.2666f
 
     private val DIGITAL_LADDER = listOf(2f, 3f, 5f, 10f, 20f, 30f, 60f)
-    private const val MAX_DIGITAL_STOPS = 3
 
     fun eqFocalMm(focalMm: Float, sensorWidthMm: Float, sensorHeightMm: Float): Float {
         val diagonal = hypot(sensorWidthMm, sensorHeightMm)
@@ -172,10 +172,24 @@ object LensPlan {
             )
         }.sortedBy { it.baseStop }
 
+        // A CameraX logical multi-camera commonly reports one camera ID but
+        // multiple focal lengths (ultrawide/main/tele behind it). Those focal
+        // ratios are real selectable stops even though they are not separate
+        // CameraInfo entries; CameraX resolves them with zoomRatio on that
+        // same logical camera. Keep these distinct from lenses that require a
+        // CameraSelector rebind.
+        val opticalStops = usable
+            .flatMap { spec -> spec.focalsMm.filter { it > 0f } }
+            .map { roundStop(it / referenceFocal) }
+            .filter { it > 0f }
+            .distinct()
+            .sorted()
+
         return LensLayout(
             referenceCameraId = referenceId,
             lenses = lenses,
-            stops = stopsFor(lenses),
+            stops = stopsFor(lenses, opticalStops),
+            opticalStops = opticalStops,
         )
     }
 
@@ -221,12 +235,19 @@ object LensPlan {
      * digital ladder between them, never more than a few extra entries so the
      * pill stays readable.
      */
-    private fun stopsFor(lenses: List<Lens>): List<Float> {
-        val physical = lenses.map { roundStop(it.baseStop) }.distinct().sorted()
+    private fun stopsFor(lenses: List<Lens>, opticalStops: List<Float>): List<Float> {
+        val physical = (lenses.map { roundStop(it.baseStop) } + opticalStops)
+            .distinct()
+            .filter { stop ->
+                lenses.any { lens ->
+                    val ratio = stop / lens.baseStop
+                    ratio >= lens.minZoom - 1e-3f && ratio <= lens.maxZoom + 1e-3f
+                }
+            }
+            .sorted()
         val maxZoom = lenses.maxOf { it.maxDisplayedZoom }
         val digital = DIGITAL_LADDER
             .filter { step -> step <= maxZoom + 0.01f && physical.none { abs(it - step) < 0.15f } }
-            .let { if (it.size > MAX_DIGITAL_STOPS) it.take(MAX_DIGITAL_STOPS) else it }
         val stops = (physical + digital).distinct().sorted().toMutableList()
         if (stops.none { abs(it - 1f) < 0.01f }) stops.add(1f)
         return stops.sorted()

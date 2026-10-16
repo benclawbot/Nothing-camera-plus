@@ -12,9 +12,9 @@ import java.io.OutputStream
  *
  * Memory matters here: a 50 MP frame decoded to ARGB_8888 is 200 MB, and the
  * earlier version of this file made it far worse by copying the bitmap and
- * allocating two more full-size arrays per blur step. The bitmap is now
- * decoded mutable (no copy), and the blur steps share a single scratch
- * array, which keeps the peak at bitmap + pixels + one scratch.
+ * buffering a second encoded JPEG in memory. The bitmap is decoded mutable
+ * (no copy), size is checked *before* full decode, and compression streams
+ * directly to the output.
  *
  * Processing is best-effort by design: [process] returns false instead of
  * throwing when the frame is too large or the device refuses, so the caller
@@ -23,7 +23,7 @@ import java.io.OutputStream
 object JpegProcessor {
 
     /** Above this pixel count the frame is saved unprocessed rather than risking an OOM. */
-    private const val MAX_PIXELS = 24_000_000L
+    private const val MAX_PIXELS = 8_000_000L
 
     private const val JPEG_QUALITY = 95
 
@@ -32,7 +32,18 @@ object JpegProcessor {
      *         caller should write the original bytes instead.
      */
     fun process(jpegBytes: ByteArray, settings: ProcessingSettings, out: OutputStream): Boolean {
-        val bitmap = decode(jpegBytes) ?: return false
+        val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        BitmapFactory.decodeByteArray(jpegBytes, 0, jpegBytes.size, bounds)
+        if (bounds.outWidth <= 0 || bounds.outHeight <= 0 ||
+            bounds.outWidth.toLong() * bounds.outHeight.toLong() > MAX_PIXELS
+        ) {
+            return false
+        }
+        val bitmap = try {
+            decode(jpegBytes)
+        } catch (_: OutOfMemoryError) {
+            null
+        } ?: return false
         return try {
             val width = bitmap.width
             val height = bitmap.height
@@ -43,10 +54,7 @@ object JpegProcessor {
             ImageProcessor.apply(pixels, width, height, settings)
             bitmap.setPixels(pixels, 0, width, 0, 0, width, height)
 
-            val encoded = java.io.ByteArrayOutputStream()
-            if (!bitmap.compress(Bitmap.CompressFormat.JPEG, JPEG_QUALITY, encoded)) return false
-            out.write(encoded.toByteArray())
-            true
+            bitmap.compress(Bitmap.CompressFormat.JPEG, JPEG_QUALITY, out)
         } catch (t: Throwable) {
             // OutOfMemoryError included: the shot matters more than the look.
             false

@@ -214,10 +214,26 @@ object RecorderPlan {
         val usable = fpsRanges.filter { it.first >= 1 && it.last >= it.first }
         if (usable.isEmpty()) return null
         val matching = usable.filter { targetFps in it }
-        if (matching.isEmpty()) return null
-        val best = matching.minWithOrNull(
-            compareBy({ abs(midpoint(it) - targetFps) }, { -it.last }),
-        ) ?: return null
+        val best = if (matching.isNotEmpty()) {
+            // A variable bracket that contains the requested capture rate is
+            // preferable to choosing a nearby fixed-rate mode.
+            matching.minWithOrNull(
+                compareBy({ it.last - it.first }, { abs(midpoint(it) - targetFps) }, { -it.last }),
+            )
+        } else {
+            // When the target sits between two discrete brackets, choose the
+            // nearest endpoint; a tie goes to the faster bracket. Values
+            // outside the camera's entire reported range remain unsupported.
+            val low = usable.minOf { it.first }
+            val high = usable.maxOf { it.last }
+            if (targetFps !in low..high) return null
+            usable.minWithOrNull(
+                compareBy<IntRange>(
+                    { minOf(abs(it.first - targetFps), abs(it.last - targetFps)) },
+                    { -it.last },
+                ),
+            )
+        } ?: return null
         return 1f / best.last
     }
 
