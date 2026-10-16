@@ -1,0 +1,20 @@
+# Gradle
+.gradle/
+build/
+
+# Android Studio / IntelliJ
+.idea/
+*.iml
+local.properties
+
+# OS
+.DS_Store
+
+# Keystores (never commit signing material)
+*.jks
+*.keystore
+
+# Native/CMake scratch
+.externalNativeBuild
+.cxx
+captures/
