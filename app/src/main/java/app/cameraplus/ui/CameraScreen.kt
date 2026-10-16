@@ -560,6 +560,9 @@ fun CameraScreen() {
                                     inFlight--
                                     status = "Saved"
                                 },
+                                onNote = { note ->
+                                    status = note
+                                },
                                 onError = { error ->
                                     inFlight--
                                     status = error.message ?: "Capture failed"

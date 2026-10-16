@@ -376,6 +376,7 @@ class CameraSession(
     fun capture(
         settings: ProcessingSettings,
         onSaved: (Uri) -> Unit,
+        onNote: (String) -> Unit = {},
         onError: (Exception) -> Unit,
     ) {
         val capture = imageCapture ?: run {
@@ -385,7 +386,7 @@ class CameraSession(
         when {
             rawEnabled -> captureRawToFile(capture, onSaved, onError)
             settings == ProcessingSettings.NATURAL -> captureToFile(capture, onSaved, onError)
-            else -> captureToMemory(capture, settings, onSaved, onError)
+            else -> captureToMemory(capture, settings, onSaved, onNote, onError)
         }
     }
 
@@ -553,6 +554,7 @@ class CameraSession(
         capture: ImageCapture,
         settings: ProcessingSettings,
         onSaved: (Uri) -> Unit,
+        onNote: (String) -> Unit,
         onError: (Exception) -> Unit,
     ) {
         val entry = createEntry() ?: run {
@@ -572,9 +574,18 @@ class CameraSession(
                 val resolver = context.contentResolver
                 ioExecutor.execute {
                     try {
-                        resolver.openOutputStream(uri)?.use { out ->
+                        val processed = resolver.openOutputStream(uri)?.use { out ->
                             JpegProcessor.process(jpeg, settings, out)
                         } ?: throw IllegalStateException("Could not open the output stream")
+                        if (!processed) {
+                            // The look could not be applied (frame too large,
+                            // low memory). Keep the shot, write the original.
+                            resolver.openOutputStream(uri)?.use { it.write(jpeg) }
+                                ?: throw IllegalStateException("Could not write the capture")
+                            mainExecutor.execute {
+                                onNote("Saved without the look — frame too large to process")
+                            }
+                        }
                         mainExecutor.execute { onSaved(uri) }
                     } catch (t: Throwable) {
                         resolver.delete(uri, null, null)
