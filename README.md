@@ -11,15 +11,15 @@ An Android camera app, built from scratch as a clean-room project.
 | Milestone | State |
 | --- | --- |
 | M1 — Skeleton (preview, capture, UI shell) | Done, build-validated |
-| M2 — Instant shutter | Planned |
-| M3 — Processing control (Natural + strengths) | Planned |
+| M2 — Instant shutter | Core done (ZSL capture + queueing) |
+| M3 — Processing control (Natural + strengths) | Settings + software pipeline done; preview parity pending |
 | M4 — Video stabilization & lens switching | Planned |
 | M5 — Composition aids | Planned |
 | M6 — RAW / Camera2 depth | Planned |
 
 Details in [ROADMAP.md](ROADMAP.md).
 
-**Validation honesty:** this project is validated by compilation (`assembleDebug`) and JVM unit tests only. It has not been run on a physical device yet; capture latency, image quality, HDR, and stabilization behaviour are unverified until it is.
+**Validation honesty:** this project is validated by compilation (`assembleDebug`) and JVM unit tests only. It has not been run on a physical device yet; capture latency, processing quality and speed, and stabilization behaviour are unverified until it is.
 
 ## Features (M1)
 
@@ -27,6 +27,8 @@ Details in [ROADMAP.md](ROADMAP.md).
 - Still capture (`ImageCapture`) saved to `Pictures/Camera+/` through MediaStore.
 - Flash toggle and front/back lens flip.
 - Mode selector scaffold (PHOTO / VIDEO / PORTRAIT) — only PHOTO captures for now.
+- Processing sheet: `Natural` (neutral) plus adjustable sharpening / noise reduction / HDR / skin smoothing; the intent is persisted.
+- Non-Natural captures are processed in software before saving (full-resolution JPEG decode/encode on a background thread).
 - Dark, monochrome UI: black window, white controls, monospace labels, round shutter, dot indicator under the active mode. All visuals are original; only system fonts and standard Material icons are used.
 
 ## Building

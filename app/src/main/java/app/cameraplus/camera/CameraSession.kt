@@ -2,6 +2,7 @@ package app.cameraplus.camera
 
 import android.content.ContentValues
 import android.content.Context
+import android.graphics.ImageFormat
 import android.hardware.camera2.CameraCharacteristics
 import android.net.Uri
 import android.provider.MediaStore
@@ -9,12 +10,16 @@ import androidx.camera.camera2.interop.Camera2CameraInfo
 import androidx.camera.core.CameraSelector
 import androidx.camera.core.ImageCapture
 import androidx.camera.core.ImageCaptureException
+import androidx.camera.core.ImageProxy
 import androidx.camera.core.Preview
 import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.camera.view.PreviewView
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.LifecycleOwner
+import app.cameraplus.processing.JpegProcessor
+import app.cameraplus.settings.ProcessingSettings
 import java.util.concurrent.Executor
+import java.util.concurrent.Executors
 
 /**
  * Thin wrapper around CameraX: binds Preview + ImageCapture to a [PreviewView]
@@ -28,14 +33,19 @@ import java.util.concurrent.Executor
  * lenses rebinds the session whenever the effective capture mode changes.
  * Captures are never blocked: repeated taps queue up.
  *
- * All methods are main-thread only, matching where CameraX delivers its
- * callbacks via the main executor.
+ * Processing (M3): the neutral intent takes the fast path straight to
+ * MediaStore; any non-neutral intent is applied in software to the frame in
+ * memory on a background thread before the file is written.
+ *
+ * All public methods are main-thread only, matching where CameraX delivers
+ * its callbacks via the main executor.
  */
 class CameraSession(
     private val context: Context,
     private val lifecycleOwner: LifecycleOwner,
 ) {
     private val mainExecutor: Executor = ContextCompat.getMainExecutor(context)
+    private val ioExecutor: Executor = Executors.newSingleThreadExecutor()
 
     private var cameraProvider: ProcessCameraProvider? = null
     private var imageCapture: ImageCapture? = null
@@ -92,27 +102,52 @@ class CameraSession(
         }
     }
 
-    fun capture(onSaved: (Uri) -> Unit, onError: (Exception) -> Unit) {
+    /**
+     * Captures a still. [settings] controls whether the frame goes straight
+     * to MediaStore (neutral intent) or through software processing first.
+     */
+    fun capture(
+        settings: ProcessingSettings,
+        onSaved: (Uri) -> Unit,
+        onError: (Exception) -> Unit,
+    ) {
         val capture = imageCapture ?: run {
             onError(IllegalStateException("Camera is not ready"))
             return
         }
+        if (settings == ProcessingSettings.NATURAL) {
+            captureToFile(capture, onSaved, onError)
+        } else {
+            captureToMemory(capture, settings, onSaved, onError)
+        }
+    }
 
+    private fun createEntry(): Pair<Uri, ContentValues>? {
         val name = "CameraPlus_${System.currentTimeMillis()}"
         val values = ContentValues().apply {
             put(MediaStore.Images.Media.DISPLAY_NAME, "$name.jpg")
             put(MediaStore.Images.Media.MIME_TYPE, "image/jpeg")
             put(MediaStore.Images.Media.RELATIVE_PATH, "Pictures/Camera+")
         }
-
-        val resolver = context.contentResolver
         val collection = MediaStore.Images.Media.EXTERNAL_CONTENT_URI
-        val uri = resolver.insert(collection, values) ?: run {
+        val uri = context.contentResolver.insert(collection, values) ?: return null
+        return uri to values
+    }
+
+    /** Fast path: the JPEG goes straight from the camera to the file. */
+    private fun captureToFile(
+        capture: ImageCapture,
+        onSaved: (Uri) -> Unit,
+        onError: (Exception) -> Unit,
+    ) {
+        val entry = createEntry() ?: run {
             onError(IllegalStateException("Could not create a MediaStore entry"))
             return
         }
-
-        val options = ImageCapture.OutputFileOptions.Builder(resolver, uri, values).build()
+        val (uri, values) = entry
+        val options = ImageCapture.OutputFileOptions
+            .Builder(context.contentResolver, uri, values)
+            .build()
         capture.takePicture(options, mainExecutor, object : ImageCapture.OnImageSavedCallback {
             override fun onImageSaved(outputFileResults: ImageCapture.OutputFileResults) {
                 onSaved(outputFileResults.savedUri ?: uri)
@@ -120,10 +155,60 @@ class CameraSession(
 
             override fun onError(exception: ImageCaptureException) {
                 // Do not leave a dangling empty entry behind.
-                resolver.delete(uri, null, null)
+                context.contentResolver.delete(uri, null, null)
                 onError(exception)
             }
         })
+    }
+
+    /** Processed path: decode, apply the intent, encode, write. */
+    private fun captureToMemory(
+        capture: ImageCapture,
+        settings: ProcessingSettings,
+        onSaved: (Uri) -> Unit,
+        onError: (Exception) -> Unit,
+    ) {
+        val entry = createEntry() ?: run {
+            onError(IllegalStateException("Could not create a MediaStore entry"))
+            return
+        }
+        val (uri, _) = entry
+        capture.takePicture(mainExecutor, object : ImageCapture.OnImageCapturedCallback() {
+            override fun onCaptureSuccess(image: ImageProxy) {
+                val jpeg = image.toJpegBytes()
+                image.close()
+                if (jpeg == null) {
+                    context.contentResolver.delete(uri, null, null)
+                    onError(IllegalStateException("Capture did not produce a JPEG frame"))
+                    return
+                }
+                val resolver = context.contentResolver
+                ioExecutor.execute {
+                    try {
+                        resolver.openOutputStream(uri)?.use { out ->
+                            JpegProcessor.process(jpeg, settings, out)
+                        } ?: throw IllegalStateException("Could not open the output stream")
+                        mainExecutor.execute { onSaved(uri) }
+                    } catch (t: Throwable) {
+                        resolver.delete(uri, null, null)
+                        mainExecutor.execute { onError(t.asException()) }
+                    }
+                }
+            }
+
+            override fun onError(exception: ImageCaptureException) {
+                context.contentResolver.delete(uri, null, null)
+                onError(exception)
+            }
+        })
+    }
+
+    private fun ImageProxy.toJpegBytes(): ByteArray? {
+        if (format != ImageFormat.JPEG) return null
+        val buffer = planes[0].buffer
+        val bytes = ByteArray(buffer.remaining())
+        buffer.get(bytes)
+        return bytes
     }
 
     private fun rebind(onError: (Exception) -> Unit = {}) {

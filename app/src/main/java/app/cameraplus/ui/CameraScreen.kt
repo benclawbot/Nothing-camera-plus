@@ -191,6 +191,7 @@ fun CameraScreen() {
                             // previous frames are still being written.
                             inFlight++
                             session.capture(
+                                settings = processing,
                                 onSaved = {
                                     inFlight--
                                     status = "Saved"

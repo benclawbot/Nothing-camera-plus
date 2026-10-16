@@ -1,0 +1,61 @@
+package app.cameraplus.processing
+
+import app.cameraplus.settings.ProcessingSettings
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotEquals
+import org.junit.Assert.assertTrue
+import org.junit.Test
+
+class ImageProcessorTest {
+
+    private fun rgb(r: Int, g: Int, b: Int): Int = (0xFF shl 24) or (r shl 16) or (g shl 8) or b
+    private fun red(p: Int) = (p shr 16) and 0xFF
+
+    @Test
+    fun naturalIsANoOp() {
+        val pixels = intArrayOf(rgb(10, 20, 30), rgb(200, 100, 50))
+        val original = pixels.copyOf()
+        ImageProcessor.apply(pixels, 2, 1, ProcessingSettings.NATURAL)
+        assertTrue(original.contentEquals(pixels))
+    }
+
+    @Test
+    fun hdrLiftsShadowsAndKeepsWhite() {
+        val pixels = intArrayOf(rgb(10, 10, 10), rgb(255, 255, 255))
+        ImageProcessor.apply(pixels, 2, 1, ProcessingSettings(hdr = 1f))
+        assertTrue("shadow pixel should lift", red(pixels[0]) > 10)
+        assertEquals("white should stay white", 255, red(pixels[1]))
+    }
+
+    @Test
+    fun noiseReductionPullsAnIsolatedPixelTowardItsNeighbours() {
+        val dark = rgb(0, 0, 0)
+        val bright = rgb(255, 255, 255)
+        val pixels = intArrayOf(dark, dark, bright, dark, dark)
+        ImageProcessor.apply(pixels, 5, 1, ProcessingSettings(noiseReduction = 1f))
+        assertTrue("bright spike should dim", red(pixels[2]) < 255)
+        assertTrue("neighbour should rise slightly", red(pixels[1]) > 0)
+    }
+
+    @Test
+    fun skinSmoothingTouchesSkinTonesOnly() {
+        val skinA = rgb(200, 150, 120)
+        val skinB = rgb(180, 140, 110)
+        val grayA = rgb(128, 128, 128)
+        val grayB = rgb(90, 90, 90)
+        val pixels = intArrayOf(skinA, skinB, grayA, grayB)
+        ImageProcessor.apply(pixels, 4, 1, ProcessingSettings(skinSmoothing = 1f))
+        assertNotEquals("skin pixel should smooth toward its neighbour", skinA, pixels[0])
+        assertEquals("grey pixel stays untouched", grayA, pixels[2])
+    }
+
+    @Test
+    fun sharpenRaisesContrastAcrossAnEdge() {
+        val left = rgb(100, 100, 100)
+        val right = rgb(140, 140, 140)
+        val pixels = intArrayOf(left, left, left, right, right, right)
+        ImageProcessor.apply(pixels, 6, 1, ProcessingSettings(sharpening = 1f))
+        assertTrue("dark side of the edge should darken", red(pixels[2]) < 100)
+        assertTrue("bright side of the edge should brighten", red(pixels[3]) > 140)
+    }
+}

@@ -27,7 +27,7 @@ Goal: stop forcing over-processing; make the saved image match the preview.
 - [x] `Natural` preset: neutral processing intent, selectable from the processing sheet
 - [x] Adjustable strength for: sharpening, noise reduction, HDR, skin smoothing (settings sheet)
 - [x] Persisted user settings (clamped on load)
-- [ ] Apply the intent to saved images (post-processing pipeline)
+- [x] Apply the intent to saved images (software pipeline for stills: full-resolution decode, process, encode, off the main thread)
 - [ ] Parity between preview and saved output (same intent applied to both)
 
 ## M4 — Video stabilization and lens switching
