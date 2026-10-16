@@ -82,6 +82,8 @@ import app.cameraplus.camera.FlashChoice
 import app.cameraplus.camera.PhotoAspectRatio
 import app.cameraplus.camera.PhotoResolution
 import app.cameraplus.camera.VideoFrameRate
+import app.cameraplus.camera.ModeZoomPlan
+import app.cameraplus.camera.ZoomUseCase
 import app.cameraplus.camera.WhiteBalancePreset
 import app.cameraplus.camera.LensZoomPlan
 import app.cameraplus.camera.ManualControlPlan
@@ -126,6 +128,7 @@ import kotlinx.coroutines.withContext
 enum class CameraMode(val label: String, val session: SessionMode?) {
     PHOTO("PHOTO", SessionMode.PHOTO),
     PORTRAIT("PORTRAIT", SessionMode.PHOTO),
+    BEAUTY("BEAUTY", SessionMode.PHOTO),
     NIGHT("NIGHT", SessionMode.PHOTO),
     PANORAMA("PANORAMA", SessionMode.PHOTO),
     MACRO("MACRO", SessionMode.PHOTO),
@@ -141,9 +144,22 @@ enum class CameraMode(val label: String, val session: SessionMode?) {
 
 private fun extensionModeFor(mode: CameraMode, photoHdrEnabled: Boolean): Int = when {
     mode == CameraMode.PORTRAIT -> ExtensionMode.BOKEH
+    mode == CameraMode.BEAUTY -> ExtensionMode.FACE_RETOUCH
     mode == CameraMode.NIGHT -> ExtensionMode.NIGHT
     mode == CameraMode.PHOTO && photoHdrEnabled -> ExtensionMode.HDR
     else -> ExtensionMode.NONE
+}
+
+private fun CameraMode.zoomUseCase(): ZoomUseCase = when (this) {
+    CameraMode.PORTRAIT, CameraMode.BEAUTY -> ZoomUseCase.PORTRAIT
+    CameraMode.NIGHT -> ZoomUseCase.NIGHT
+    CameraMode.SLOW_MOTION -> ZoomUseCase.SLOW_MOTION
+    CameraMode.TIME_LAPSE -> ZoomUseCase.TIME_LAPSE
+    CameraMode.PANORAMA -> ZoomUseCase.PANORAMA
+    CameraMode.MACRO -> ZoomUseCase.MACRO
+    CameraMode.VIDEO -> ZoomUseCase.VIDEO
+    CameraMode.EXPERT -> ZoomUseCase.EXPERT
+    CameraMode.PHOTO, CameraMode.QR -> ZoomUseCase.PHOTO
 }
 
 @Composable
@@ -215,6 +231,7 @@ fun CameraScreen() {
     var geotagEnabled by remember { mutableStateOf(false) }
     var currentLocation by remember { mutableStateOf<Location?>(null) }
     var stabilizationEnabled by remember { mutableStateOf(true) }
+    var opticalStabilizationEnabled by remember { mutableStateOf(false) }
     var videoQuality by remember { mutableStateOf(capturePreferences.videoQuality) }
     var videoFrameRate by remember { mutableStateOf(capturePreferences.videoFrameRate) }
     var photoAspectRatio by remember { mutableStateOf(capturePreferences.photoAspectRatio) }
@@ -222,6 +239,8 @@ fun CameraScreen() {
     var photoHdrEnabled by remember { mutableStateOf(capturePreferences.photoHdrEnabled) }
     var mirrorCapture by remember { mutableStateOf(capturePreferences.mirrorCapture) }
     var shutterSoundEnabled by remember { mutableStateOf(capturePreferences.shutterSoundEnabled) }
+    var volumeKeyShutter by remember { mutableStateOf(capturePreferences.volumeKeyShutter) }
+    var touchShutter by remember { mutableStateOf(capturePreferences.touchShutter) }
     var selfTimer by remember { mutableStateOf(capturePreferences.selfTimer) }
     var timerDeadline by remember { mutableStateOf(0L) }
     var timerLeft by remember { mutableIntStateOf(0) }
@@ -232,6 +251,7 @@ fun CameraScreen() {
     var focusGauge by remember { mutableStateOf(0f) }
     var whiteBalance by remember { mutableStateOf(capturePreferences.whiteBalance) }
     var whiteBalanceKelvin by remember { mutableIntStateOf(capturePreferences.whiteBalanceKelvin) }
+    val modeZoomMaximum = ModeZoomPlan.maximum(mode.zoomUseCase(), capabilities.maxDisplayedZoom)
 
     val camera2Recorder = remember(context, camera2TextureView) {
         Camera2Recorder(
@@ -286,8 +306,10 @@ fun CameraScreen() {
         geotagEnabled = granted
         if (granted) {
             requestCurrentLocation(context) { location ->
-                updateCaptureLocation(location)
-                if (location != null) status = "Geotagging enabled"
+                if (geotagEnabled) {
+                    updateCaptureLocation(location)
+                    if (location != null) status = "Geotagging enabled"
+                }
             }
         } else {
             updateCaptureLocation(null)
@@ -373,6 +395,8 @@ fun CameraScreen() {
         selfTimer,
         mirrorCapture,
         shutterSoundEnabled,
+        volumeKeyShutter,
+        touchShutter,
         photoHdrEnabled,
         timeLapseSpeed,
         slowMotionFps,
@@ -390,6 +414,8 @@ fun CameraScreen() {
                 selfTimer = selfTimer,
                 mirrorCapture = mirrorCapture,
                 shutterSoundEnabled = shutterSoundEnabled,
+                volumeKeyShutter = volumeKeyShutter,
+                touchShutter = touchShutter,
                 photoHdrEnabled = photoHdrEnabled,
                 timeLapseSpeed = timeLapseSpeed,
                 slowMotionFps = slowMotionFps,
@@ -410,6 +436,12 @@ fun CameraScreen() {
     LaunchedEffect(mode) {
         if (mode == CameraMode.VIDEO && micEnabled && !audioGranted) {
             audioPermission.launch(Manifest.permission.RECORD_AUDIO)
+        }
+    }
+
+    LaunchedEffect(mode, modeZoomMaximum, capabilities.minDisplayedZoom) {
+        if (!mode.usesCamera2Recorder && zoom > modeZoomMaximum) {
+            zoom = session.setDisplayedZoom(modeZoomMaximum)
         }
     }
 
@@ -583,6 +615,36 @@ fun CameraScreen() {
         }
     }
 
+    fun captureBeauty() {
+        if (processingCapture) return
+        processingCapture = true
+        inFlight++
+        coroutineScope.launch {
+            try {
+                val frame = capturePixelFrame(MODE_CAPTURE_MAX_DIMENSION)
+                val pixels = frame.pixels
+                val strength = if (processing.skinSmoothing > 0f) processing.skinSmoothing else 0.55f
+                withContext(Dispatchers.Default) {
+                    ImageProcessor.apply(
+                        pixels,
+                        frame.width,
+                        frame.height,
+                        processing.copy(skinSmoothing = strength),
+                    )
+                }
+                saveModeCapture(
+                    pixels,
+                    frame.width,
+                    frame.height,
+                    "Beauty",
+                    "Software skin smoothing · no face reshaping",
+                )
+            } catch (error: Throwable) {
+                finishModeCapture(error.message ?: "Beauty capture failed")
+            }
+        }
+    }
+
     fun capturePanoramaFrame() {
         if (processingCapture) return
         processingCapture = true
@@ -638,9 +700,37 @@ fun CameraScreen() {
         when (mode) {
             CameraMode.NIGHT -> if (capabilities.extensionActive) captureNow() else captureNight()
             CameraMode.PORTRAIT -> if (capabilities.extensionActive) captureNow() else capturePortrait()
+            CameraMode.BEAUTY -> if (capabilities.extensionActive) captureNow() else captureBeauty()
             CameraMode.PANORAMA -> capturePanoramaFrame()
             CameraMode.QR -> Unit
             else -> captureNow()
+        }
+    }
+
+    fun pressStillShutter() {
+        if (processingCapture || inFlight >= MAX_IN_FLIGHT) return
+        shutterPulse++
+        if (mode == CameraMode.PHOTO && selfTimer.enabled) {
+            if (timerDeadline == 0L) {
+                inFlight++
+                pendingShot = true
+                timerDeadline = System.currentTimeMillis() + selfTimer.seconds * 1000L
+            }
+        } else if (mode == CameraMode.PHOTO || mode == CameraMode.EXPERT) {
+            inFlight++
+            captureNow()
+        } else {
+            captureCurrentMode()
+        }
+    }
+
+    LaunchedEffect(volumeKeyShutter) {
+        if (volumeKeyShutter) {
+            CameraKeyEvents.volumeShutter.collect {
+                if (mode != CameraMode.VIDEO && !mode.usesCamera2Recorder && mode != CameraMode.QR) {
+                    pressStillShutter()
+                }
+            }
         }
     }
 
@@ -764,10 +854,15 @@ fun CameraScreen() {
                 .pointerInput(Unit) {
                     detectTapGestures(
                         onTap = { offset ->
-                            focusTarget = offset
-                            focusLocked = false
-                            evIndex = session.currentExposureCompensationIndex()
-                            session.focusAndMeterAt(offset.x, offset.y)
+                            if (touchShutter) {
+                                focusTarget = null
+                                pressStillShutter()
+                            } else {
+                                focusTarget = offset
+                                focusLocked = false
+                                evIndex = session.currentExposureCompensationIndex()
+                                session.focusAndMeterAt(offset.x, offset.y)
+                            }
                         },
                         onLongPress = { offset ->
                             focusTarget = offset
@@ -777,9 +872,11 @@ fun CameraScreen() {
                     )
                 }
                 .pointerInput(capabilities.maxDisplayedZoom) {
-                    detectTransformGestures { _, _, gestureZoom, _ ->
-                        // Gesture zoom is incremental, so this accumulates.
-                        zoom = session.setDisplayedZoom(zoom * gestureZoom) { error ->
+                detectTransformGestures { _, _, gestureZoom, _ ->
+                    // Gesture zoom is incremental, so this accumulates.
+                    val target = (zoom * gestureZoom)
+                        .coerceIn(capabilities.minDisplayedZoom, modeZoomMaximum)
+                    zoom = session.setDisplayedZoom(target) { error ->
                             status = error.message ?: "Could not zoom"
                         }
                         pinching = true
@@ -882,8 +979,10 @@ fun CameraScreen() {
                             if (fineGranted || coarseGranted) {
                                 geotagEnabled = true
                                 requestCurrentLocation(context) { location ->
-                                    updateCaptureLocation(location)
-                                    if (location != null) status = "Geotagging enabled"
+                                    if (geotagEnabled) {
+                                        updateCaptureLocation(location)
+                                        if (location != null) status = "Geotagging enabled"
+                                    }
                                 }
                             } else {
                                 locationPermission.launch(
@@ -997,6 +1096,8 @@ fun CameraScreen() {
                     hdrSupported = capabilities.hdrExtensionAvailable,
                     mirrorCapture = mirrorCapture,
                     shutterSoundEnabled = shutterSoundEnabled,
+                    volumeKeyShutter = volumeKeyShutter,
+                    touchShutter = touchShutter,
                     onAspectRatio = { selected ->
                         photoAspectRatio = selected
                         session.setPhotoAspectRatio(selected) { error ->
@@ -1019,6 +1120,12 @@ fun CameraScreen() {
                     },
                     onHdrToggle = {
                         photoHdrEnabled = !photoHdrEnabled
+                        if (photoHdrEnabled) {
+                            rawEnabled = false
+                            isoGauge = 0f
+                            speedGauge = 0f
+                            focusGauge = 0f
+                        }
                         session.setExtensionMode(
                             if (photoHdrEnabled) ExtensionMode.HDR else ExtensionMode.NONE,
                         ) { error -> status = error.message ?: "Could not toggle hardware HDR" }
@@ -1031,14 +1138,16 @@ fun CameraScreen() {
                         shutterSoundEnabled = !shutterSoundEnabled
                         session.setShutterSoundEnabled(shutterSoundEnabled)
                     },
+                    onVolumeKeyToggle = { volumeKeyShutter = !volumeKeyShutter },
+                    onTouchShutterToggle = { touchShutter = !touchShutter },
                 )
                 Spacer(Modifier.height(8.dp))
             }
             if (!mode.usesCamera2Recorder) {
                 ZoomPill(
-                    stops = capabilities.zoomStops,
+                    stops = capabilities.zoomStops.filter { it <= modeZoomMaximum + 0.01f },
                     current = zoom,
-                    zoomable = capabilities.maxDisplayedZoom > capabilities.minDisplayedZoom,
+                    zoomable = modeZoomMaximum > capabilities.minDisplayedZoom,
                     onSelect = { stop ->
                         zoom = session.setDisplayedZoom(stop) { error ->
                             status = error.message ?: "Could not switch lens"
@@ -1046,7 +1155,9 @@ fun CameraScreen() {
                         pinching = false
                     },
                 )
-                if (capabilities.zoomStops.size > 1) Spacer(Modifier.height(14.dp))
+                if (capabilities.zoomStops.any { it <= modeZoomMaximum } &&
+                    capabilities.zoomStops.filter { it <= modeZoomMaximum }.size > 1
+                ) Spacer(Modifier.height(14.dp))
             }
 
             when (mode) {
@@ -1054,10 +1165,13 @@ fun CameraScreen() {
                     VideoChips(
                         stabilizationEnabled = stabilizationEnabled,
                         stabilization = capabilities.stabilization,
+                        opticalStabilizationEnabled = opticalStabilizationEnabled,
+                        opticalStabilizationSupported = capabilities.opticalStabilizationSupported,
                         micEnabled = micEnabled,
                         quality = videoQuality,
                         frameRate = videoFrameRate,
                         supportedFrameRates = capabilities.supportedVideoFrameRates,
+                        videoSnapshotSupported = capabilities.videoSnapshotSupported,
                         onStabToggle = {
                             val next = !stabilizationEnabled
                             stabilizationEnabled = next
@@ -1068,6 +1182,13 @@ fun CameraScreen() {
                             }
                             session.setStabilizationEnabled(next) { error ->
                                 status = error.message ?: "Could not change stabilization"
+                            }
+                        },
+                        onOisToggle = {
+                            val next = !opticalStabilizationEnabled
+                            opticalStabilizationEnabled = next
+                            session.setOpticalStabilizationEnabled(next) { error ->
+                                status = error.message ?: "Could not change OIS"
                             }
                         },
                         onMicToggle = {
@@ -1191,6 +1312,20 @@ fun CameraScreen() {
                     Spacer(Modifier.height(14.dp))
                 }
 
+                CameraMode.BEAUTY -> {
+                    Text(
+                        text = if (capabilities.extensionActive) {
+                            "CAMERA FACE-RETOUCH EXTENSION"
+                        } else {
+                            "SOFTWARE SKIN SMOOTHING · NO FACE SHAPING"
+                        },
+                        color = DimWhite,
+                        fontFamily = FontFamily.Monospace,
+                        style = MaterialTheme.typography.labelSmall,
+                    )
+                    Spacer(Modifier.height(14.dp))
+                }
+
                 CameraMode.NIGHT -> {
                     Text(
                         text = if (capabilities.extensionActive) {
@@ -1293,6 +1428,12 @@ fun CameraScreen() {
                         val previous = mode
                         mode = selected
                         if (!previous.usesCamera2Recorder && !selected.usesCamera2Recorder) {
+                            if (extensionModeFor(selected, photoHdrEnabled) != ExtensionMode.NONE) {
+                                rawEnabled = false
+                                isoGauge = 0f
+                                speedGauge = 0f
+                                focusGauge = 0f
+                            }
                             selected.session?.let { sessionMode ->
                                 session.setProfile(
                                     newMode = sessionMode,
@@ -1372,25 +1513,7 @@ fun CameraScreen() {
                         capturing = inFlight > 0,
                         enabled = inFlight < MAX_IN_FLIGHT && !processingCapture,
                         pulse = shutterPulse,
-                        onClick = {
-                            // Feedback is immediate; the file write happens in
-                            // the background and the shutter stays armed, so
-                            // burst tapping feels instant like the stock app.
-                            shutterPulse++
-                            if (mode == CameraMode.PHOTO && selfTimer.enabled) {
-                                if (timerDeadline == 0L) {
-                                    inFlight++
-                                    pendingShot = true
-                                    timerDeadline = System.currentTimeMillis() +
-                                        selfTimer.seconds * 1000L
-                                }
-                            } else if (mode == CameraMode.PHOTO || mode == CameraMode.EXPERT) {
-                                inFlight++
-                                captureNow()
-                            } else {
-                                captureCurrentMode()
-                            }
-                        },
+                        onClick = { pressStillShutter() },
                     )
                 }
                 IconCircle(
@@ -1497,12 +1620,16 @@ private fun ZoomPill(
 private fun VideoChips(
     stabilizationEnabled: Boolean,
     stabilization: StabilizationLevel,
+    opticalStabilizationEnabled: Boolean,
+    opticalStabilizationSupported: Boolean,
     micEnabled: Boolean,
     quality: VideoQuality,
     frameRate: VideoFrameRate,
     supportedFrameRates: List<VideoFrameRate>,
+    videoSnapshotSupported: Boolean,
     recording: Boolean,
     onStabToggle: () -> Unit,
+    onOisToggle: () -> Unit,
     onMicToggle: () -> Unit,
     onQualityClick: () -> Unit,
     onFrameRateClick: () -> Unit,
@@ -1522,6 +1649,12 @@ private fun VideoChips(
             onClick = onMicToggle,
         )
         ToggleChip(
+            label = "OIS",
+            active = opticalStabilizationEnabled,
+            enabled = opticalStabilizationSupported,
+            onClick = onOisToggle,
+        )
+        ToggleChip(
             label = quality.label,
             active = false,
             enabled = true,
@@ -1536,7 +1669,7 @@ private fun VideoChips(
         ToggleChip(
             label = "SNAP",
             active = false,
-            enabled = recording,
+            enabled = recording && videoSnapshotSupported,
             onClick = onSnapshot,
         )
     }
@@ -1805,11 +1938,15 @@ private fun PhotoCaptureOptions(
     hdrSupported: Boolean,
     mirrorCapture: Boolean,
     shutterSoundEnabled: Boolean,
+    volumeKeyShutter: Boolean,
+    touchShutter: Boolean,
     onAspectRatio: (PhotoAspectRatio) -> Unit,
     onResolution: () -> Unit,
     onHdrToggle: () -> Unit,
     onMirrorToggle: () -> Unit,
     onShutterSoundToggle: () -> Unit,
+    onVolumeKeyToggle: () -> Unit,
+    onTouchShutterToggle: () -> Unit,
 ) {
     Column(horizontalAlignment = Alignment.CenterHorizontally) {
         Text(
@@ -1855,6 +1992,18 @@ private fun PhotoCaptureOptions(
                 active = shutterSoundEnabled,
                 enabled = true,
                 onClick = onShutterSoundToggle,
+            )
+            ToggleChip(
+                label = "VOL",
+                active = volumeKeyShutter,
+                enabled = true,
+                onClick = onVolumeKeyToggle,
+            )
+            ToggleChip(
+                label = "TOUCH",
+                active = touchShutter,
+                enabled = true,
+                onClick = onTouchShutterToggle,
             )
         }
     }

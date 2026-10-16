@@ -116,6 +116,7 @@ class CameraSession(
     private var imageCapture: ImageCapture? = null
     private var videoCapture: VideoCapture<Recorder>? = null
     private var imageAnalysis: ImageAnalysis? = null
+    private var videoSnapshotSupported = false
     private var boundPreviewView: PreviewView? = null
     private var onZslChanged: (Boolean) -> Unit = {}
     private var onCapabilities: (SessionCapabilities) -> Unit = {}
@@ -131,6 +132,7 @@ class CameraSession(
     @Volatile private var captureLocation: Location? = null
     @Volatile private var watermarkOptions = WatermarkOptions()
     private var stabilizationEnabled = true
+    private var opticalStabilizationEnabled = false
     private var videoQuality: VideoQuality = VideoQuality.FHD
     private var videoFrameRate: VideoFrameRate = VideoFrameRate.FPS_30
     private var photoAspectRatio = PhotoAspectRatio.FOUR_THREE
@@ -234,7 +236,10 @@ class CameraSession(
         mode = newMode
         requestedExtensionMode = if (newMode == SessionMode.VIDEO) ExtensionMode.NONE else extensionMode
         macroEnabled = newMode != SessionMode.VIDEO && macroMode
-        if (newMode == SessionMode.VIDEO) rawEnabled = false
+        if (newMode == SessionMode.VIDEO || requestedExtensionMode != ExtensionMode.NONE) {
+            rawEnabled = false
+            manualControls = ManualControls()
+        }
         if (mode != SessionMode.VIDEO) torchEnabled = false
         if (bindAfterChange) rebind(onError)
     }
@@ -516,6 +521,20 @@ class CameraSession(
             return
         }
         stabilizationEnabled = enabled
+        if (mode == SessionMode.VIDEO) rebind(onError)
+    }
+
+    fun setOpticalStabilizationEnabled(enabled: Boolean, onError: (Exception) -> Unit = {}) {
+        if (opticalStabilizationEnabled == enabled) return
+        if (isRecording()) {
+            onError(IllegalStateException("Stop recording before changing optical stabilization"))
+            return
+        }
+        if (enabled && onCapabilitiesState?.opticalStabilizationSupported != true) {
+            onError(IllegalStateException("Optical stabilization is not reported by this lens"))
+            return
+        }
+        opticalStabilizationEnabled = enabled
         if (mode == SessionMode.VIDEO) rebind(onError)
     }
 
@@ -1086,14 +1105,24 @@ class CameraSession(
                     image.setCropAspectRatio(Rational(photoAspectRatio.numerator, photoAspectRatio.denominator))
                     image.flashMode = ImageCapture.FLASH_MODE_OFF
                 }
-            val built = VideoCapture.Builder(recorder)
+            val videoBuilder = VideoCapture.Builder(recorder)
                 .setVideoStabilizationEnabled(stabilizationEnabled)
                 .setTargetFrameRate(Range(videoFrameRate.fps, videoFrameRate.fps))
                 .setMirrorMode(
                     if (mirrorCaptureEnabled) MirrorMode.MIRROR_MODE_ON_FRONT_ONLY
                     else MirrorMode.MIRROR_MODE_OFF,
                 )
-                .build()
+            if (cameraFlags[targetId]?.opticalStabilization == true) {
+                Camera2Interop.Extender(videoBuilder).setCaptureRequestOption(
+                    CaptureRequest.LENS_OPTICAL_STABILIZATION_MODE,
+                    if (opticalStabilizationEnabled) {
+                        android.hardware.camera2.CameraMetadata.LENS_OPTICAL_STABILIZATION_MODE_ON
+                    } else {
+                        android.hardware.camera2.CameraMetadata.LENS_OPTICAL_STABILIZATION_MODE_OFF
+                    },
+                )
+            }
+            val built = videoBuilder.build()
             video = built
             capture = stillCapture
             useCases += stillCapture
@@ -1141,15 +1170,39 @@ class CameraSession(
             provider.bindToLifecycle(lifecycleOwner, selector, sessionConfig)
         } catch (t: Throwable) {
             activeExtensionMode = ExtensionMode.NONE
-            // The chosen camera id can disappear (privacy toggle, concurrent
-            // use). Fall back to the platform default for this facing.
-            selectedCameraId = null
-            provider.bindToLifecycle(
-                lifecycleOwner,
-                CameraSelector.Builder().requireLensFacing(lensFacing).build(),
-                sessionConfig,
-            )
+            if (mode == SessionMode.VIDEO && capture != null && video != null) {
+                // Some camera/encoder combinations cannot bind preview + still
+                // snapshot + video simultaneously. Preserve video by dropping
+                // only the optional snapshot use case.
+                provider.unbindAll()
+                val videoOnlyConfig = SessionConfig.Builder(preview, video).apply {
+                    if (lookEnabled) addEffect(ensureLookEffect())
+                }.build()
+                capture = null
+                videoSnapshotSupported = false
+                runCatching { errorSink(IllegalStateException("Still snapshots are unavailable in this video configuration", t)) }
+                runCatching {
+                    provider.bindToLifecycle(lifecycleOwner, selector, videoOnlyConfig)
+                }.getOrElse {
+                    selectedCameraId = null
+                    provider.bindToLifecycle(
+                        lifecycleOwner,
+                        CameraSelector.Builder().requireLensFacing(lensFacing).build(),
+                        videoOnlyConfig,
+                    )
+                }
+            } else {
+                // The chosen camera id can disappear (privacy toggle,
+                // concurrent use). Fall back to the platform default.
+                selectedCameraId = null
+                provider.bindToLifecycle(
+                    lifecycleOwner,
+                    CameraSelector.Builder().requireLensFacing(lensFacing).build(),
+                    sessionConfig,
+                )
+            }
         }
+        if (mode == SessionMode.VIDEO && capture != null) videoSnapshotSupported = true
         imageCapture = capture
         videoCapture = video
         imageAnalysis = analysis
@@ -1219,6 +1272,9 @@ class CameraSession(
                     CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP,
                 )?.getOutputSizes(ImageFormat.JPEG)
                     ?.maxOfOrNull { it.width.toLong() * it.height.toLong() } ?: 0L,
+                opticalStabilization = camera2.getCameraCharacteristic(
+                    CameraCharacteristics.LENS_INFO_AVAILABLE_OPTICAL_STABILIZATION,
+                )?.contains(android.hardware.camera2.CameraMetadata.LENS_OPTICAL_STABILIZATION_MODE_ON) == true,
             )
             specs += LensSpec(
                 cameraId = camera2.cameraId,
@@ -1377,10 +1433,18 @@ class CameraSession(
                         ExtensionMode.HDR,
                     ) == true
                 }.getOrDefault(false),
+                faceRetouchExtensionAvailable = runCatching {
+                    extensionsManager?.isExtensionAvailable(
+                        selectorForCamera(layout?.referenceCameraId ?: boundId),
+                        ExtensionMode.FACE_RETOUCH,
+                    ) == true
+                }.getOrDefault(false),
                 extensionActive = activeExtensionMode != ExtensionMode.NONE,
                 macroFocusSupported = autofocusModes?.contains(
                     android.hardware.camera2.CameraMetadata.CONTROL_AF_MODE_MACRO,
                 ) == true,
+                opticalStabilizationSupported = flags?.opticalStabilization == true,
+                videoSnapshotSupported = mode == SessionMode.VIDEO && videoSnapshotSupported,
             )
         onCapabilitiesState = published
         onCapabilities(published)
@@ -1444,6 +1508,7 @@ private data class CameraFlags(
     val raw: Boolean,
     val evStep: Float,
     val maxJpegPixels: Long,
+    val opticalStabilization: Boolean,
 )
 
 /** Video finalize carried an error; the partial entry is deleted first. */

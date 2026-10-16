@@ -24,6 +24,9 @@ data class SessionCapabilities(
     val portraitExtensionAvailable: Boolean = false,
     val nightExtensionAvailable: Boolean = false,
     val hdrExtensionAvailable: Boolean = false,
+    val faceRetouchExtensionAvailable: Boolean = false,
     val extensionActive: Boolean = false,
     val macroFocusSupported: Boolean = false,
+    val opticalStabilizationSupported: Boolean = false,
+    val videoSnapshotSupported: Boolean = false,
 )

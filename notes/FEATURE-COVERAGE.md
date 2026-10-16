@@ -17,15 +17,15 @@ Status legend:
 |---|---|---|
 | Photo | ✅ | |
 | Video | ✅ | |
-| Portrait / Bokeh | 🟡 | UI + centre-weighted software blur; no depth map, output downsampled |
-| Night | 🟡 | UI + 4-frame alignment/merge; output downsampled, device validation pending |
+| Portrait / Bokeh | 🟡 | CameraX BOKEH extension if advertised; otherwise software blur without depth |
+| Night | 🟡 | CameraX NIGHT extension if advertised; otherwise 4-frame downsampled merge |
 | Slow motion (device-supported high-speed rates) | 🟡 | Camera2 constrained high-speed + MediaRecorder path; hardware unverified |
 | Time lapse (X15…X960) | 🟡 | Camera2 + MediaRecorder interval path; hardware unverified |
 | Panorama (+ direction switch, super/standard) | 🟡 | UI + translation-only software stitch; no rotation correction, downsampled |
 | Macro / Detail close-up | 🟡 | Camera2 macro AF mode when the lens reports it; 4cm/tele macro unverified |
 | Expert / Manual | 🟡 | ISO/shutter/MF/EV and WB presets/custom Kelvin; histogram/Pro meter missing |
-| Beauty / retouching | 🚫 | needs their face pipeline |
-| Beauty video | 🚫 | same |
+| Beauty / retouching | 🟡 | CameraX FACE_RETOUCH extension when available; fallback is basic smoothing |
+| Beauty video | 🚫 | no video face-retouch pipeline |
 | PanoNight | ⬜ | stretch |
 
 ## Photo
@@ -46,7 +46,7 @@ Status legend:
 | Google Lens | 🚫 | requires the external Google app/service |
 | Stickers | ⬜ | no clean-room sticker pack/editor |
 | Face detection overlay | ⬜ | no face detector integrated |
-| QR scan | ✅ | local ZXing QR-only analyzer, no network scan service |
+| QR scan | ✅ | local ZXing QR-only analyzer; open/copy result actions |
 
 ## Zoom / lens
 
@@ -54,7 +54,7 @@ Status legend:
 |---|---|---|
 | 0.6x / 1x / 2x lens stops | 🟡 | logical/physical focal planning implemented; hardware enumeration unverified |
 | Pinch zoom over device range | 🟡 | gestures + range clamp implemented; hardware range unverified |
-| Per-mode zoom caps (night 30x, slo-mo 2x, timelapse 10x) | ⬜ | |
+| Per-mode zoom caps (night 30x, slo-mo 2x, timelapse 10x) | 🟡 | CameraX modes are capped; Camera2 slow-motion/time-lapse gestures remain limited |
 | Focal-length labels (14/24/28/35mm…) | ⬜ | cosmetic |
 
 ## Video
@@ -63,13 +63,14 @@ Status legend:
 |---|---|---|
 | Video quality picker | 🟡 | HD/1080p/4K plus requested 30/60fps; camera/encoder combination remains device-dependent |
 | EIS standard/super/off | 🟡 | on/off only |
+| OIS control | 🟡 | Camera2 OIS request when reported by the bound lens |
 | Action mode 60fps | ⬜ | |
 | Night video | ⬜ | |
 | H.264 / H.265 encoder picker | 🟡 | CameraX picks; no UI |
 | Audio mute | ✅ | |
 | Record location | 🟡 | explicit runtime opt-in, last/current fix stored in MediaStore/EXIF; hardware/provider behavior unverified |
 | Mirror capture | 🟡 | front-camera still/video mirror is wired; output behavior unverified |
-| Video snapshot | 🟡 | concurrent still ImageCapture is bound during Video; device support unverified |
+| Video snapshot | 🟡 | concurrent still ImageCapture is attempted; video-only fallback if unsupported |
 | Beauty video | 🚫 | |
 
 ## Portrait
@@ -96,7 +97,7 @@ Status legend:
 |---|---|---|
 | Device-supported high-speed fps recording | 🟡 | camera2 `createConstrainedHighSpeedCaptureSession`; hardware unverified |
 | Resolution picker | 🟡 | chooses largest supported size at or below 1080p; no user resolution picker |
-| Zoom cap 2x | ⬜ | |
+| Zoom cap 2x | 🟡 | CameraX zoom UI capped; Camera2 high-speed camera has no live zoom controls |
 
 ## Time lapse
 
@@ -125,7 +126,8 @@ Status legend:
 | Feature | Camera+ | Note |
 |---|---|---|
 | Processing sheet (tone/skin/sharp/…) | ✅ | Includes clean-room Natural/B&W/Warm/Cool/Vivid/Vintage looks |
-| In-app gallery (recent Camera+ media, photo viewer, share) | 🟡 | Camera+ items: view/share/favorite/delete/info; video opens in system player |
+| Volume-key and touch shutter | 🟡 | opt-in still capture; smile shutter is not implemented |
+| In-app gallery (recent Camera+ media, photo viewer, share) | 🟡 | Camera+ items: view/share/favorite/delete/date/size; video opens in system player |
 | Tap-to-focus/meter | 🟡 | CameraX metering action; hardware behavior unverified |
 | Viewfinder exposure-compensation control | 🟡 | EV slider wired to CameraX; hardware behavior unverified |
 | Long-press focus/meter lock | 🟡 | long-duration metering action; hardware behavior unverified |
@@ -135,10 +137,10 @@ Status legend:
 | Save position | 🟡 | fixed Camera+ MediaStore folders, no user-selectable path |
 | Modes editor / reordering | ⬜ | cosmetic |
 | Watermark (brand/date/time/location/author) | 🟡 | software stamp options; camera-parameter watermark and original styles absent |
-| AI scene detection | 🚫 | vendor ML |
-| Colour mode natural/vivid | 🟡 | processing sheet covers |
+| AI scene detection | ⬜ | no local scene classifier |
+| Colour mode natural/vivid | 🟡 | six clean-room saved/preview looks; no scene-driven original Colour Mode |
 | Presets / user LUT import | ⬜ | no LUT import/export |
-| Filters (Morpho/Tetras + user LUT) | 🚫 | original vendor renderers/assets unavailable; clean-room filters are separate |
+| Filters (Morpho/Tetras + user LUT) | 🟡 | six clean-room looks; original packs/renderers and LUT import are absent |
 
 ---
 
@@ -169,8 +171,9 @@ unit-tested math component does not count as hardware feature parity.
 | Original item | Status | Evidence / Camera+ note |
 |---|---|---|
 | Mode carousel with configurable/reorderable mode list | 🟡 | clean-room modes are listed; reorder editor absent |
-| Photo / Video / Portrait / Manual / Panorama / Night / Time lapse / Slow motion / Macro / QR entries | 🟡 | public-API modes are available; Beauty and PanoNight are absent |
-| Beauty photo and Beauty video modes | 🚫 | `ProductConfig.isSupportBeauty*`; proprietary face pipeline |
+| Photo / Video / Portrait / Beauty / Manual / Panorama / Night / Time lapse / Slow motion / Macro / QR entries | 🟡 | public-API modes are available; PanoNight is absent |
+| Beauty photo mode | 🟡 | CameraX FACE_RETOUCH extension if advertised; otherwise software skin smoothing |
+| Beauty video mode | 🚫 | `ProductConfig.isSupportBeautyVideo`; no video face-retouch pipeline |
 | Bokeh mode distinct from Portrait | 🟡 | clean-room simulated portrait blur only |
 | Panorama-night / PanoHDR mode | ⬜ | `ModeIndex.PANORAMA_NIGHT_ID`, proprietary HDR path |
 | Launcher shortcuts for Photo front/back, Video, Portrait, Time lapse, Panorama, Manual, Slo-mo, Macro, Night | ⬜ | `CameraMode`, `CameraConfig.CAMERA_SUBMODE_*` |
@@ -218,7 +221,7 @@ unit-tested math component does not count as hardware feature parity.
 | Record-location / geotag toggle | 🟡 | permission-gated current/last fix written where provider supports it |
 | Mirror capture | 🟡 | front-camera still/video mirroring is wired; device behavior unverified |
 | Zoom/lens switching while recording | 🟡 | UI zoom planning exists; hardware transition behavior unverified |
-| Video snapshot while recording | 🟡 | UI action plus concurrent CameraX still use case; device support unverified |
+| Video snapshot while recording | 🟡 | concurrent CameraX still use case with video-only fallback; device support unverified |
 | Slow motion 1080p120/240/480 and 4K120 | 🟡 | dynamically enumerates high-speed rates up to 1080p; 4K120 is not offered |
 | Slow-motion supported-rate picker | 🟡 | device-reported rate picker; needs hardware validation |
 | Slow-motion zoom cap and mute/snapshot rules | ⬜ | no mode-specific zoom cap or snapshot action |
@@ -274,7 +277,7 @@ unit-tested math component does not count as hardware feature parity.
 
 | Original item | Status | Evidence / Camera+ note |
 |---|---|---|
-| AI scene detection / ASD and scene-specific effects | 🚫 | proprietary models/services not included |
+| AI scene detection / ASD and scene-specific effects | ⬜ | no generic scene classifier; original vendor models not included |
 | Auto/Vivid/Natural color-mode picker and scene descriptions | 🟡 | general processing settings exist; original scene-driven mode is absent |
 | Morpho/Tetras filter packs and filter-strength picker | 🚫 | vendor renderers/assets intentionally excluded |
 | User LUT import / presets and preset sharing | ⬜ | no LUT import/export yet |
@@ -287,7 +290,8 @@ unit-tested math component does not count as hardware feature parity.
 | Gallery delete/favorite/info actions | 🟡 | delete/favorite/date/size implemented; crop/rotate/editor absent |
 | Motion-photo playback in gallery | 🚫 | motion photo capture absent |
 | Shutter sound toggle | ✅ | MediaActionSound toggle; hardware/region policy may override |
-| Volume-key / touch / smile shutter | ⬜ | `pref_camera_volume_key`, `pref_shutter_touch_key`, `pref_shutter_smile_key` |
+| Volume-key still shutter | ✅ | explicit opt-in and only while enabled |
+| Touch / smile shutter | ⬜ | `pref_shutter_touch_key`, `pref_shutter_smile_key` |
 | Save-position / default-gallery selection | ⬜ | app currently writes to Camera+ MediaStore folders |
 | Anti-flicker, exposure-metering, dehaze/distortion controls | ⬜ | advanced vendor settings not implemented |
 | Restore defaults | ⬜ | no global settings screen yet |

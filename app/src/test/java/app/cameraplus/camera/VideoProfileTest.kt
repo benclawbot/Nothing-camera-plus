@@ -80,4 +80,15 @@ class VideoProfileTest {
         assertEquals("2x", LensZoomPlan.stopLabel(2f))
         assertEquals("2.5x", LensZoomPlan.stopLabel(2.5f))
     }
+
+    @Test
+    fun perModeZoomLimitsNeverExceedHardware() {
+        assertEquals(2f, ModeZoomPlan.maximum(ZoomUseCase.SLOW_MOTION, 20f), 0f)
+        assertEquals(10f, ModeZoomPlan.maximum(ZoomUseCase.TIME_LAPSE, 20f), 0f)
+        assertEquals(20f, ModeZoomPlan.maximum(ZoomUseCase.NIGHT, 20f), 0f)
+        assertEquals(30f, ModeZoomPlan.maximum(ZoomUseCase.NIGHT, 60f), 0f)
+        assertEquals(1f, ModeZoomPlan.maximum(ZoomUseCase.PANORAMA, 20f), 0f)
+        assertEquals(3f, ModeZoomPlan.maximum(ZoomUseCase.PORTRAIT, 3f), 0f)
+        assertEquals(1f, ModeZoomPlan.maximum(ZoomUseCase.VIDEO, 0.5f), 0f)
+    }
 }

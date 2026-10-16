@@ -75,3 +75,21 @@ object LensZoomPlan {
         else -> String.format(Locale.US, "%.1fx", stop)
     }
 }
+
+/** Per-mode ceilings from the original camera, bounded by the lens/hardware. */
+enum class ZoomUseCase { PHOTO, VIDEO, EXPERT, PORTRAIT, NIGHT, SLOW_MOTION, TIME_LAPSE, PANORAMA, MACRO }
+
+object ModeZoomPlan {
+    fun maximum(useCase: ZoomUseCase, hardwareMaximum: Float): Float {
+        val modeMaximum = when (useCase) {
+            ZoomUseCase.PHOTO, ZoomUseCase.VIDEO, ZoomUseCase.EXPERT -> Float.POSITIVE_INFINITY
+            ZoomUseCase.PORTRAIT -> 4f
+            ZoomUseCase.NIGHT -> 30f
+            ZoomUseCase.SLOW_MOTION -> 2f
+            ZoomUseCase.TIME_LAPSE -> 10f
+            ZoomUseCase.PANORAMA -> 1f
+            ZoomUseCase.MACRO -> 4f
+        }
+        return hardwareMaximum.coerceAtLeast(1f).coerceAtMost(modeMaximum)
+    }
+}

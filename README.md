@@ -21,9 +21,9 @@ All planned milestones are implemented in v1.0.0 and build-validated:
 
 Details in [ROADMAP.md](ROADMAP.md).
 
-**Validation honesty:** the v1.0.0 release was validated by compilation and JVM tests. The current local parity work builds and passes 176 JVM tests, but has not been run on a physical device; capture latency, camera enumeration, high-speed recording, extension support, processing quality, video stabilization, lens transitions, gallery visibility and RAW output remain unverified on hardware.
+**Validation honesty:** the v1.0.0 release was validated by compilation and JVM tests. The current local parity work builds and passes 177 JVM tests, but has not been run on a physical device; capture latency, camera enumeration, high-speed recording, extension support, processing quality, video stabilization, lens transitions, gallery visibility and RAW output remain unverified on hardware.
 
-**Parity work in progress:** local development now includes an in-app gallery with delete/favorite/share, exposure/focus controls, lens and zoom planning, aspect ratios, maximum JPEG selection, flash auto, front-camera mirror, geotagging, watermark options, shutter sound, white balance, simple color looks, QR scanning, video quality/fps requests, and software/CameraX-extension/Camera2 paths for slow motion, time lapse, panorama, portrait and night capture. These changes are not part of the v1.0.0 APK linked below and are not yet released. The original-app feature-by-feature status and honest limitations are tracked in [notes/FEATURE-COVERAGE.md](notes/FEATURE-COVERAGE.md); the v1.1 implementation and device-test checklist is in [notes/PLAN-v1.1.md](notes/PLAN-v1.1.md).
+**Parity work in progress:** local development now includes an in-app gallery with delete/favorite/share, exposure/focus controls, lens and zoom planning, aspect ratios, max JPEG selection, Auto flash, front-camera mirror, geotagging, watermark options, shutter sound, volume-key shutter, white balance, clean-room color looks, QR scanning, video quality/fps requests and video snapshots. It also tries CameraX BOKEH/NIGHT/HDR/FACE_RETOUCH extensions when a device advertises them, with bounded software fallbacks for still modes; slow motion/time lapse use Camera2. These changes are not in the v1.0.0 APK linked below and are not released. The original-app feature inventory, current status and limitations are tracked in [notes/FEATURE-COVERAGE.md](notes/FEATURE-COVERAGE.md); device checks are in [notes/PLAN-v1.1.md](notes/PLAN-v1.1.md).
 
 ## Download
 
@@ -66,7 +66,7 @@ Requirements:
 
 ```bash
 ./gradlew :app:assembleDebug       # debug APK
-./gradlew :app:testDebugUnitTest   # JVM unit tests (176)
+./gradlew :app:testDebugUnitTest   # JVM unit tests (177)
 ```
 
 `local.properties` (git-ignored) points at your SDK:
@@ -92,7 +92,7 @@ Runtime requirement: Android 13 or newer (`minSdk 33` — the preview-parity GL 
   - `ui/CameraScreen.kt`, `ui/GalleryScreen.kt`, `ui/FocusControls.kt`, `ui/CompositionOverlay.kt`, `ui/ProcessingSheet.kt`, `ui/CameraPlusApp.kt`, `ui/theme/Theme.kt` — Compose UI
   - `processing/` — software still pipeline (`ImageProcessor` pure math, `JpegProcessor` glue)
   - `settings/ProcessingSettings.kt` — processing-intent model
-- `app/src/test/` — JVM unit tests (176)
+- `app/src/test/` — JVM unit tests (177)
 - `dist/` — built APK
 
 ## License

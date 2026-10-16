@@ -19,6 +19,8 @@ data class CapturePreferences(
     val selfTimer: SelfTimer = SelfTimer.OFF,
     val mirrorCapture: Boolean = false,
     val shutterSoundEnabled: Boolean = true,
+    val volumeKeyShutter: Boolean = false,
+    val touchShutter: Boolean = false,
     val photoHdrEnabled: Boolean = false,
     val timeLapseSpeed: Int = 60,
     val slowMotionFps: Int = 120,
@@ -40,6 +42,8 @@ class CapturePreferencesStore(context: Context) {
         selfTimer = enumValue(prefs.getString(KEY_TIMER, null), SelfTimer.OFF),
         mirrorCapture = prefs.getBoolean(KEY_MIRROR, false),
         shutterSoundEnabled = prefs.getBoolean(KEY_SOUND, true),
+        volumeKeyShutter = prefs.getBoolean(KEY_VOLUME_SHUTTER, false),
+        touchShutter = prefs.getBoolean(KEY_TOUCH_SHUTTER, false),
         photoHdrEnabled = prefs.getBoolean(KEY_HDR, false),
         timeLapseSpeed = prefs.getInt(KEY_TIME_LAPSE_SPEED, 60)
             .takeIf { it in TIME_LAPSE_SPEEDS } ?: 60,
@@ -61,6 +65,8 @@ class CapturePreferencesStore(context: Context) {
             .putString(KEY_TIMER, options.selfTimer.name)
             .putBoolean(KEY_MIRROR, options.mirrorCapture)
             .putBoolean(KEY_SOUND, options.shutterSoundEnabled)
+            .putBoolean(KEY_VOLUME_SHUTTER, options.volumeKeyShutter)
+            .putBoolean(KEY_TOUCH_SHUTTER, options.touchShutter)
             .putBoolean(KEY_HDR, options.photoHdrEnabled)
             .putInt(KEY_TIME_LAPSE_SPEED, options.timeLapseSpeed)
             .putInt(KEY_SLOW_MOTION_FPS, options.slowMotionFps)
@@ -82,6 +88,8 @@ class CapturePreferencesStore(context: Context) {
         const val KEY_TIMER = "self_timer"
         const val KEY_MIRROR = "mirror"
         const val KEY_SOUND = "shutter_sound"
+        const val KEY_VOLUME_SHUTTER = "volume_shutter"
+        const val KEY_TOUCH_SHUTTER = "touch_shutter"
         const val KEY_HDR = "photo_hdr"
         const val KEY_TIME_LAPSE_SPEED = "time_lapse_speed"
         const val KEY_SLOW_MOTION_FPS = "slow_motion_fps"
