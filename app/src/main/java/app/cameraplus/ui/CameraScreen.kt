@@ -21,6 +21,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Cameraswitch
 import androidx.compose.material.icons.outlined.FlashOff
 import androidx.compose.material.icons.outlined.FlashOn
+import androidx.compose.material.icons.outlined.GridOn
 import androidx.compose.material.icons.outlined.PhotoLibrary
 import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material3.Icon
@@ -75,6 +76,8 @@ fun CameraScreen() {
     val store = remember(context) { ProcessingSettingsStore(context) }
     var processing by remember { mutableStateOf(store.load()) }
     var showProcessing by remember { mutableStateOf(false) }
+    var guides by remember { mutableStateOf(CompositionGuides.NONE) }
+    val roll = rememberSensorRoll()
 
     var mode by remember { mutableStateOf(CameraMode.PHOTO) }
     var flashEnabled by remember { mutableStateOf(false) }
@@ -111,6 +114,15 @@ fun CameraScreen() {
             modifier = Modifier.fillMaxSize(),
         )
 
+        GuideOverlay(
+            guides = guides,
+            modifier = Modifier.fillMaxSize(),
+        )
+        LevelLine(
+            rollDegrees = roll,
+            modifier = Modifier.fillMaxSize(),
+        )
+
         Row(
             modifier = Modifier
                 .align(Alignment.TopCenter)
@@ -135,12 +147,21 @@ fun CameraScreen() {
                     tint = White,
                 )
             }
-            IconButton(onClick = { showProcessing = true }) {
-                Icon(
-                    imageVector = Icons.Outlined.Settings,
-                    contentDescription = "Processing settings",
-                    tint = White,
-                )
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                IconButton(onClick = { guides = guides.next() }) {
+                    Icon(
+                        imageVector = Icons.Outlined.GridOn,
+                        contentDescription = "Cycle composition guides",
+                        tint = White,
+                    )
+                }
+                IconButton(onClick = { showProcessing = true }) {
+                    Icon(
+                        imageVector = Icons.Outlined.Settings,
+                        contentDescription = "Processing settings",
+                        tint = White,
+                    )
+                }
             }
         }
 

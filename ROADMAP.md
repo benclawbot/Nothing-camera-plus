@@ -38,8 +38,8 @@ Goal: stop forcing over-processing; make the saved image match the preview.
 
 ## M5 — Composition aids without clutter
 
-- [ ] Horizontal level indicator
-- [ ] Additional composition guides (rule of thirds, center, diagonals)
+- [x] Horizontal level indicator (gravity sensor; line counter-rotates and brightens when level)
+- [x] Additional composition guides (rule of thirds, center, diagonals — cycled from the top bar, off by default)
 - [ ] Quick access to exposure and focus without leaving Auto
 - [ ] Expert controls remain available, opt-in
 

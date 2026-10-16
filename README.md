@@ -14,7 +14,7 @@ An Android camera app, built from scratch as a clean-room project.
 | M2 — Instant shutter | Core done (ZSL capture + queueing) |
 | M3 — Processing control (Natural + strengths) | Settings + software pipeline done; preview parity pending |
 | M4 — Video stabilization & lens switching | Planned |
-| M5 — Composition aids | Planned |
+| M5 — Composition aids | Core done (guides + level) |
 | M6 — RAW / Camera2 depth | Planned |
 
 Details in [ROADMAP.md](ROADMAP.md).
@@ -29,6 +29,7 @@ Details in [ROADMAP.md](ROADMAP.md).
 - Mode selector scaffold (PHOTO / VIDEO / PORTRAIT) — only PHOTO captures for now.
 - Processing sheet: `Natural` (neutral) plus adjustable sharpening / noise reduction / HDR / skin smoothing; the intent is persisted.
 - Non-Natural captures are processed in software before saving (full-resolution JPEG decode/encode on a background thread).
+- Composition aids: rule-of-thirds / center / diagonal guides (cycled from the top bar, off by default) and a gravity-driven level line.
 - Dark, monochrome UI: black window, white controls, monospace labels, round shutter, dot indicator under the active mode. All visuals are original; only system fonts and standard Material icons are used.
 
 ## Building
