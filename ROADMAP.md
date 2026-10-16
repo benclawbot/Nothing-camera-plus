@@ -15,10 +15,10 @@ The requirements below are distilled from publicly posted user feedback. All imp
 
 Goal: the frame is captured at the moment of the tap; processing (HDR, denoise) finishes afterwards while the camera stays ready for the next shot. Aimed at moving subjects: kids, pets, candid shots.
 
-- [ ] Capture the frame on tap without waiting for the processing pipeline (zero-shutter-lag session where the device supports it)
+- [x] Capture the frame on tap without waiting for the processing pipeline (zero-shutter-lag session where the device supports it; flash toggles back to the standard path)
 - [ ] Move HDR/post-processing to a background step after the frame is buffered
-- [ ] Keep the shutter armed during processing; no blocked next capture
-- [ ] Honest in-progress state in the UI
+- [x] Keep the shutter armed during processing; no blocked next capture (captures queue, the shutter never locks)
+- [x] Honest in-progress state in the UI (shutter reflects pending saves)
 
 ## M3 — Control over the finished photo
 

@@ -73,13 +73,19 @@ fun CameraScreen() {
 
     var mode by remember { mutableStateOf(CameraMode.PHOTO) }
     var flashEnabled by remember { mutableStateOf(false) }
-    var capturing by remember { mutableStateOf(false) }
+    var inFlight by remember { mutableStateOf(0) }
     var status by remember { mutableStateOf<String?>(null) }
 
     DisposableEffect(lifecycleOwner) {
-        session.bind(previewView) { error ->
-            status = error.message ?: "Camera unavailable"
-        }
+        session.bind(
+            previewView = previewView,
+            onZslChanged = { active ->
+                status = if (active) "Instant shutter ready" else null
+            },
+            onError = { error ->
+                status = error.message ?: "Camera unavailable"
+            },
+        )
         onDispose { session.unbind() }
     }
 
@@ -111,8 +117,11 @@ fun CameraScreen() {
         ) {
             IconButton(
                 onClick = {
-                    flashEnabled = !flashEnabled
-                    session.setFlashEnabled(flashEnabled)
+                    val next = !flashEnabled
+                    flashEnabled = next
+                    session.setFlashEnabled(next) { error ->
+                        status = error.message ?: "Could not toggle flash"
+                    }
                 },
             ) {
                 Icon(
@@ -169,18 +178,20 @@ fun CameraScreen() {
                     onClick = { status = "Gallery view arrives in a later milestone" },
                 )
                 ShutterButton(
-                    capturing = capturing,
+                    capturing = inFlight > 0,
                     enabled = mode == CameraMode.PHOTO,
                     onClick = {
-                        if (!capturing && mode == CameraMode.PHOTO) {
-                            capturing = true
+                        if (mode == CameraMode.PHOTO) {
+                            // Captures queue: the shutter stays armed while
+                            // previous frames are still being written.
+                            inFlight++
                             session.capture(
                                 onSaved = {
-                                    capturing = false
+                                    inFlight--
                                     status = "Saved"
                                 },
                                 onError = { error ->
-                                    capturing = false
+                                    inFlight--
                                     status = error.message ?: "Capture failed"
                                 },
                             )
@@ -191,7 +202,7 @@ fun CameraScreen() {
                     imageVector = Icons.Outlined.Cameraswitch,
                     contentDescription = "Switch camera",
                     onClick = {
-                        session.flipLens(previewView) { error ->
+                        session.flipLens { error ->
                             status = error.message ?: "Could not switch camera"
                         }
                     },
