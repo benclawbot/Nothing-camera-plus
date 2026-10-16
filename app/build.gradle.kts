@@ -6,14 +6,15 @@ plugins {
 
 android {
     namespace = "app.cameraplus"
-    compileSdk = 35
+    compileSdk = 36
 
     defaultConfig {
         applicationId = "app.cameraplus"
-        minSdk = 30
+        // 33+: the preview-parity effect reads SurfaceRequest.surface directly.
+        minSdk = 33
         targetSdk = 35
-        versionCode = 1
-        versionName = "0.1.0"
+        versionCode = 2
+        versionName = "1.0.0"
     }
 
     buildTypes {
@@ -57,6 +58,9 @@ dependencies {
     implementation(libs.androidx.camera.camera2)
     implementation(libs.androidx.camera.lifecycle)
     implementation(libs.androidx.camera.view)
+    implementation(libs.androidx.camera.video)
+    implementation(libs.androidx.camera.effects)
+    implementation(libs.androidx.concurrent.futures)
 
     testImplementation(libs.junit)
 

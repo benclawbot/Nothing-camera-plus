@@ -14,6 +14,7 @@ import androidx.camera.core.ImageCapture
 import androidx.camera.core.ImageCaptureException
 import androidx.camera.core.ImageProxy
 import androidx.camera.core.Preview
+import androidx.camera.core.SessionConfig
 import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.camera.view.PreviewView
 import androidx.core.content.ContextCompat
@@ -60,6 +61,11 @@ class CameraSession(
     private var zeroShutterLagSupported = false
     private var appliedCaptureMode = ImageCapture.CAPTURE_MODE_MINIMIZE_LATENCY
 
+    private var errorSink: (Exception) -> Unit = {}
+    private var lookEnabled = false
+    private val lookParameters = LookParameters()
+    private var lookEffect: LookEffect? = null
+
     fun bind(
         previewView: PreviewView,
         onZslChanged: (Boolean) -> Unit = {},
@@ -67,6 +73,7 @@ class CameraSession(
     ) {
         boundPreviewView = previewView
         this.onZslChanged = onZslChanged
+        errorSink = onError
         val future = ProcessCameraProvider.getInstance(context)
         future.addListener({
             try {
@@ -104,6 +111,28 @@ class CameraSession(
             rebind(onError)
         } else {
             imageCapture?.flashMode = flashMode()
+        }
+    }
+
+    /**
+     * Updates the live preview look (M3.3): the same intent that shapes saved
+     * stills is mirrored onto the viewfinder through a GL effect. Enabling or
+     * disabling the effect changes the session shape, so it rebinds; strength
+     * changes while active only update uniforms and apply to the next frame.
+     */
+    fun setLook(settings: ProcessingSettings, onError: (Exception) -> Unit = {}) {
+        lookParameters.update(settings)
+        val desired = !lookParameters.isNeutral()
+        if (desired != lookEnabled) {
+            lookEnabled = desired
+            rebind(onError)
+        }
+    }
+
+    private fun ensureLookEffect(): LookEffect {
+        return lookEffect ?: LookEffect(lookParameters).also { effect ->
+            effect.onError { throwable -> errorSink(throwable.asException()) }
+            lookEffect = effect
         }
     }
 
@@ -258,7 +287,10 @@ class CameraSession(
             .build()
 
         provider.unbindAll()
-        boundCamera = provider.bindToLifecycle(lifecycleOwner, selector, preview, capture)
+        val sessionConfig = SessionConfig.Builder(preview, capture).apply {
+            if (lookEnabled) addEffect(ensureLookEffect())
+        }.build()
+        boundCamera = provider.bindToLifecycle(lifecycleOwner, selector, sessionConfig)
         imageCapture = capture
         appliedCaptureMode = captureMode
         onZslChanged(captureMode == ImageCapture.CAPTURE_MODE_ZERO_SHUTTER_LAG)

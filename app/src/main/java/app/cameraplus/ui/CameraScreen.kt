@@ -108,6 +108,13 @@ fun CameraScreen() {
         onDispose { session.unbind() }
     }
 
+    // Keep the viewfinder look in step with the processing intent (M3.3).
+    LaunchedEffect(processing) {
+        session.setLook(processing) { error ->
+            status = error.message ?: "Could not apply the preview look"
+        }
+    }
+
     LaunchedEffect(status) {
         if (status != null) {
             delay(2400)
