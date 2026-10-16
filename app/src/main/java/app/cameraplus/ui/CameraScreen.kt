@@ -4,6 +4,7 @@ import androidx.camera.view.PreviewView
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -38,9 +39,11 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
@@ -78,6 +81,14 @@ fun CameraScreen() {
     var showProcessing by remember { mutableStateOf(false) }
     var guides by remember { mutableStateOf(CompositionGuides.NONE) }
     val roll = rememberSensorRoll()
+    var focusRipple by remember { mutableStateOf<Offset?>(null) }
+
+    LaunchedEffect(focusRipple) {
+        if (focusRipple != null) {
+            delay(600)
+            focusRipple = null
+        }
+    }
 
     var mode by remember { mutableStateOf(CameraMode.PHOTO) }
     var flashEnabled by remember { mutableStateOf(false) }
@@ -122,6 +133,28 @@ fun CameraScreen() {
             rollDegrees = roll,
             modifier = Modifier.fillMaxSize(),
         )
+
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .pointerInput(Unit) {
+                    detectTapGestures { offset ->
+                        focusRipple = offset
+                        session.focusAndMeterAt(offset.x, offset.y)
+                    }
+                },
+        ) {
+            focusRipple?.let { point ->
+                Canvas(modifier = Modifier.fillMaxSize()) {
+                    drawCircle(
+                        color = White,
+                        radius = 26.dp.toPx(),
+                        center = point,
+                        style = Stroke(width = 2.dp.toPx()),
+                    )
+                }
+            }
+        }
 
         Row(
             modifier = Modifier

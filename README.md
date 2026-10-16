@@ -29,7 +29,7 @@ Details in [ROADMAP.md](ROADMAP.md).
 - Mode selector scaffold (PHOTO / VIDEO / PORTRAIT) — only PHOTO captures for now.
 - Processing sheet: `Natural` (neutral) plus adjustable sharpening / noise reduction / HDR / skin smoothing; the intent is persisted.
 - Non-Natural captures are processed in software before saving (full-resolution JPEG decode/encode on a background thread).
-- Composition aids: rule-of-thirds / center / diagonal guides (cycled from the top bar, off by default) and a gravity-driven level line.
+- Composition aids: rule-of-thirds / center / diagonal guides (cycled from the top bar, off by default), a gravity-driven level line, and tap-to-focus / tap-to-meter.
 - Dark, monochrome UI: black window, white controls, monospace labels, round shutter, dot indicator under the active mode. All visuals are original; only system fonts and standard Material icons are used.
 
 ## Building

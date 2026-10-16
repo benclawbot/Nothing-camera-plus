@@ -7,7 +7,9 @@ import android.hardware.camera2.CameraCharacteristics
 import android.net.Uri
 import android.provider.MediaStore
 import androidx.camera.camera2.interop.Camera2CameraInfo
+import androidx.camera.core.Camera
 import androidx.camera.core.CameraSelector
+import androidx.camera.core.FocusMeteringAction
 import androidx.camera.core.ImageCapture
 import androidx.camera.core.ImageCaptureException
 import androidx.camera.core.ImageProxy
@@ -20,6 +22,7 @@ import app.cameraplus.processing.JpegProcessor
 import app.cameraplus.settings.ProcessingSettings
 import java.util.concurrent.Executor
 import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
 
 /**
  * Thin wrapper around CameraX: binds Preview + ImageCapture to a [PreviewView]
@@ -48,6 +51,7 @@ class CameraSession(
     private val ioExecutor: Executor = Executors.newSingleThreadExecutor()
 
     private var cameraProvider: ProcessCameraProvider? = null
+    private var boundCamera: Camera? = null
     private var imageCapture: ImageCapture? = null
     private var boundPreviewView: PreviewView? = null
     private var onZslChanged: (Boolean) -> Unit = {}
@@ -76,6 +80,7 @@ class CameraSession(
 
     fun unbind() {
         cameraProvider?.unbindAll()
+        boundCamera = null
         imageCapture = null
     }
 
@@ -100,6 +105,22 @@ class CameraSession(
         } else {
             imageCapture?.flashMode = flashMode()
         }
+    }
+
+    /**
+     * Tap-to-focus / tap-to-meter (M5): runs a combined AF+AE metering action
+     * around the tapped point in preview-view coordinates. It auto-cancels,
+     * so the camera returns to its own judgement after a few seconds.
+     */
+    fun focusAndMeterAt(x: Float, y: Float) {
+        val previewView = boundPreviewView ?: return
+        val camera = boundCamera ?: return
+        val point = previewView.meteringPointFactory.createPoint(x, y)
+        val action = FocusMeteringAction.Builder(
+            point,
+            FocusMeteringAction.FLAG_AF or FocusMeteringAction.FLAG_AE,
+        ).setAutoCancelDuration(5, TimeUnit.SECONDS).build()
+        camera.cameraControl.startFocusAndMetering(action)
     }
 
     /**
@@ -237,7 +258,7 @@ class CameraSession(
             .build()
 
         provider.unbindAll()
-        provider.bindToLifecycle(lifecycleOwner, selector, preview, capture)
+        boundCamera = provider.bindToLifecycle(lifecycleOwner, selector, preview, capture)
         imageCapture = capture
         appliedCaptureMode = captureMode
         onZslChanged(captureMode == ImageCapture.CAPTURE_MODE_ZERO_SHUTTER_LAG)
