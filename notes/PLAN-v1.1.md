@@ -30,12 +30,13 @@
 - [x] Expert white-balance presets and approximate Kelvin gains.
 - [x] CameraX BOKEH/NIGHT/HDR/FACE_RETOUCH extensions when advertised, with software fallbacks.
 - [x] Camera2 macro AF where the camera reports the macro AF mode.
+- [x] CameraX screen flash view, 3DNR/OIS requests and an Action 60fps + stabilization shortcut.
 - [x] QR-only local scanning, gallery favorite/delete/info, opt-in geotag, shutter-sound toggle,
       and configurable text watermark.
 - [x] Six clean-room color looks mirrored in the still processor and live preview shader.
 - [x] Four-frame simultaneous video snapshot use-case; hardware compatibility remains to be tested.
 - [x] Photo crop ratios, optional MAX JPEG, Auto flash, still/video mirror, OIS toggle, geotag, watermark,
-      shutter sound, volume-key and touch shutter.
+      screen flash, shutter sound, volume-key and touch shutter.
 - [ ] Full original parity — other settings and vendor-only features remain open in
       `FEATURE-COVERAGE.md`.
 
@@ -50,5 +51,5 @@
 
 - 2026-10-16: original inventory completed from the local decompilation; the full coverage matrix
   is in `FEATURE-COVERAGE.md`.
-- 2026-10-16: code changes build successfully; 177 JVM tests pass. No physical device is
+- 2026-10-16: code changes build successfully; 178 JVM tests pass. No physical device is
   connected, so camera behavior, actual latency and image quality remain unverified.

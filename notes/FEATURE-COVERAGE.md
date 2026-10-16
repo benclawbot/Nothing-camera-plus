@@ -38,7 +38,7 @@ Status legend:
 | Quality 12MP / max JPEG | 🟡 | selects CameraX highest advertised output; does not promise 50MP remosaic |
 | Motion photo (live) | 🚫 | vendor capture pipeline |
 | RAW / Pro RAW | 🟡 | fixed wrong CameraX overload; hardware capture still unverified |
-| Flash off/on/torch/auto/screen | 🟡 | off/on/auto and video torch implemented; screen/Glyph/LED variants absent |
+| Flash off/on/torch/auto/screen | 🟡 | off/on/auto, ScreenFlashView and video torch; Glyph/LED variants absent |
 | Self-timer 3s / 10s | ✅ | |
 | Grid / mesh | ✅ | |
 | Leveler | ✅ | |
@@ -64,8 +64,10 @@ Status legend:
 | Video quality picker | 🟡 | HD/1080p/4K plus requested 30/60fps; camera/encoder combination remains device-dependent |
 | EIS standard/super/off | 🟡 | on/off only |
 | OIS control | 🟡 | Camera2 OIS request when reported by the bound lens |
-| Action mode 60fps | ⬜ | |
+| Action mode 60fps | 🟡 | 60fps + stabilization shortcut; stabilization behavior hardware-dependent |
 | Night video | ⬜ | |
+| Video 3DNR | 🟡 | Camera2 HIGH_QUALITY noise-reduction request when reported |
+| OIS on/off | 🟡 | Camera2 OIS request when supported by the bound lens |
 | H.264 / H.265 encoder picker | 🟡 | CameraX picks; no UI |
 | Audio mute | ✅ | |
 | Record location | 🟡 | explicit runtime opt-in, last/current fix stored in MediaStore/EXIF; hardware/provider behavior unverified |
@@ -96,7 +98,7 @@ Status legend:
 | Feature | Camera+ | Note |
 |---|---|---|
 | Device-supported high-speed fps recording | 🟡 | camera2 `createConstrainedHighSpeedCaptureSession`; hardware unverified |
-| Resolution picker | 🟡 | chooses largest supported size at or below 1080p; no user resolution picker |
+| Resolution picker | 🟡 | chooses largest advertised size up to 4K; no manual size picker |
 | Zoom cap 2x | 🟡 | CameraX zoom UI capped; Camera2 high-speed camera has no live zoom controls |
 
 ## Time lapse
@@ -209,15 +211,15 @@ unit-tested math component does not count as hardware feature parity.
 |---|---|---|
 | 1080p30 / 1080p60 / 4K30 / 4K60 choices | 🟡 | quality and 30/60fps requested separately; valid combinations vary by camera/encoder |
 | Video HDR / SHDR toggles | ⬜ | `pref_video_hdr_plus_key`, `pref_video_shdr_key` |
-| Action Mode 60fps | ⬜ | `pref_camera_video_action_mode` |
+| Action Mode 60fps | 🟡 | 60fps + stabilization shortcut; hardware behavior unverified |
 | Standard / Super EIS / Off | 🟡 | capability-detected standard/preview stabilization toggle; no Super EIS mode |
 | Night video | ⬜ | `pref_video_night_key` |
-| Video 3DNR | ⬜ | `pref_video_3dnr_title` |
+| Video 3DNR | 🟡 | Camera2 high-quality noise-reduction request when camera reports support |
 | Beauty video and retouch levels | 🚫 | vendor face pipeline |
 | Recording red-light preference | ⬜ | `pref_video_record_red_light_key` |
 | H.264 / H.265 selector | ⬜ | CameraX/MediaRecorder selects codec; no user selector |
 | Video microphone mute | ✅ | microphone toggle in standard Video mode |
-| OIS preference | 🟡 | hardware stabilization capability is exposed; no independent OIS setting |
+| OIS preference | 🟡 | independent Camera2 OIS request when supported by the lens |
 | Record-location / geotag toggle | 🟡 | permission-gated current/last fix written where provider supports it |
 | Mirror capture | 🟡 | front-camera still/video mirroring is wired; device behavior unverified |
 | Zoom/lens switching while recording | 🟡 | UI zoom planning exists; hardware transition behavior unverified |

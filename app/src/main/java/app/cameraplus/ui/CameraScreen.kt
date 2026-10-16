@@ -1,6 +1,8 @@
 package app.cameraplus.ui
 
 import android.Manifest
+import android.app.Activity
+import android.content.ContextWrapper
 import android.content.pm.PackageManager
 import android.content.ClipData
 import android.content.ClipboardManager
@@ -12,6 +14,7 @@ import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.camera.view.PreviewView
+import androidx.camera.view.ScreenFlashView
 import androidx.camera.extensions.ExtensionMode
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
@@ -173,6 +176,7 @@ fun CameraScreen() {
         }
     }
     val camera2TextureView = remember(context) { TextureView(context) }
+    val screenFlashView = remember(context) { ScreenFlashView(context) }
     val coroutineScope = rememberCoroutineScope()
 
     val store = remember(context) { ProcessingSettingsStore(context) }
@@ -200,6 +204,7 @@ fun CameraScreen() {
 
     var mode by remember { mutableStateOf(CameraMode.PHOTO) }
     var flashChoice by remember { mutableStateOf(capturePreferences.flashChoice) }
+    var screenFlashAvailable by remember { mutableStateOf(false) }
     var torchEnabled by remember { mutableStateOf(false) }
     var inFlight by remember { mutableIntStateOf(0) }
     var shutterPulse by remember { mutableIntStateOf(0) }
@@ -232,6 +237,7 @@ fun CameraScreen() {
     var currentLocation by remember { mutableStateOf<Location?>(null) }
     var stabilizationEnabled by remember { mutableStateOf(true) }
     var opticalStabilizationEnabled by remember { mutableStateOf(false) }
+    var videoNoiseReductionEnabled by remember { mutableStateOf(false) }
     var videoQuality by remember { mutableStateOf(capturePreferences.videoQuality) }
     var videoFrameRate by remember { mutableStateOf(capturePreferences.videoFrameRate) }
     var photoAspectRatio by remember { mutableStateOf(capturePreferences.photoAspectRatio) }
@@ -318,6 +324,13 @@ fun CameraScreen() {
     }
 
     fun bindCameraX() {
+        screenFlashView.setScreenFlashWindow(findActivity(context)?.window)
+        val availableScreenFlash = screenFlashView.screenFlash
+        screenFlashAvailable = availableScreenFlash != null
+        session.setScreenFlash(availableScreenFlash)
+        if (flashChoice == FlashChoice.SCREEN && availableScreenFlash == null) {
+            flashChoice = FlashChoice.OFF
+        }
         session.setFlashChoice(flashChoice)
         session.setPhotoAspectRatio(photoAspectRatio)
         session.setPhotoResolution(photoResolution)
@@ -362,6 +375,7 @@ fun CameraScreen() {
         bindCameraX()
         onDispose {
             session.unbind()
+            screenFlashView.setScreenFlashWindow(null)
             Thread { camera2Recorder.close() }.start()
         }
     }
@@ -811,6 +825,10 @@ fun CameraScreen() {
                 modifier = Modifier.fillMaxSize(),
             )
         }
+        AndroidView(
+            factory = { screenFlashView },
+            modifier = Modifier.fillMaxSize(),
+        )
 
         if (mode == CameraMode.QR) {
             qrResult?.let { result ->
@@ -934,7 +952,7 @@ fun CameraScreen() {
                         torchEnabled = next
                         session.setTorchEnabled(next)
                     } else {
-                        flashChoice = flashChoice.next()
+                        flashChoice = flashChoice.next(screenFlashAvailable)
                         session.setFlashChoice(flashChoice) { error ->
                             status = error.message ?: "Could not change flash mode"
                         }
@@ -944,8 +962,8 @@ fun CameraScreen() {
                 val image = when {
                     mode == CameraMode.VIDEO -> if (torchEnabled) Icons.Outlined.FlashOn else Icons.Outlined.FlashOff
                     flashChoice == FlashChoice.AUTO -> Icons.Outlined.FlashAuto
-                    flashChoice == FlashChoice.ON -> Icons.Outlined.FlashOn
-                    else -> Icons.Outlined.FlashOff
+                    flashChoice == FlashChoice.OFF -> Icons.Outlined.FlashOff
+                    else -> Icons.Outlined.FlashOn
                 }
                 Icon(
                     imageVector = image,
@@ -1167,6 +1185,8 @@ fun CameraScreen() {
                         stabilization = capabilities.stabilization,
                         opticalStabilizationEnabled = opticalStabilizationEnabled,
                         opticalStabilizationSupported = capabilities.opticalStabilizationSupported,
+                        videoNoiseReductionEnabled = videoNoiseReductionEnabled,
+                        videoNoiseReductionSupported = capabilities.videoNoiseReductionSupported,
                         micEnabled = micEnabled,
                         quality = videoQuality,
                         frameRate = videoFrameRate,
@@ -1189,6 +1209,31 @@ fun CameraScreen() {
                             opticalStabilizationEnabled = next
                             session.setOpticalStabilizationEnabled(next) { error ->
                                 status = error.message ?: "Could not change OIS"
+                            }
+                        },
+                        onNoiseReductionToggle = {
+                            val next = !videoNoiseReductionEnabled
+                            videoNoiseReductionEnabled = next
+                            session.setVideoNoiseReductionEnabled(next) { error ->
+                                status = error.message ?: "Could not change 3DNR"
+                            }
+                        },
+                        onActionToggle = {
+                            val actionOn = videoFrameRate == VideoFrameRate.FPS_60 && stabilizationEnabled
+                            if (actionOn) {
+                                videoFrameRate = session.setVideoFrameRate(VideoFrameRate.FPS_30)
+                                stabilizationEnabled = false
+                                session.setStabilizationEnabled(false) { error ->
+                                    status = error.message ?: "Could not disable stabilization"
+                                }
+                            } else {
+                                videoFrameRate = session.setVideoFrameRate(VideoFrameRate.FPS_60) { error ->
+                                    status = error.message ?: "60fps is not supported"
+                                }
+                                stabilizationEnabled = true
+                                session.setStabilizationEnabled(true) { error ->
+                                    status = error.message ?: "Could not enable stabilization"
+                                }
                             }
                         },
                         onMicToggle = {
@@ -1622,6 +1667,8 @@ private fun VideoChips(
     stabilization: StabilizationLevel,
     opticalStabilizationEnabled: Boolean,
     opticalStabilizationSupported: Boolean,
+    videoNoiseReductionEnabled: Boolean,
+    videoNoiseReductionSupported: Boolean,
     micEnabled: Boolean,
     quality: VideoQuality,
     frameRate: VideoFrameRate,
@@ -1630,6 +1677,8 @@ private fun VideoChips(
     recording: Boolean,
     onStabToggle: () -> Unit,
     onOisToggle: () -> Unit,
+    onNoiseReductionToggle: () -> Unit,
+    onActionToggle: () -> Unit,
     onMicToggle: () -> Unit,
     onQualityClick: () -> Unit,
     onFrameRateClick: () -> Unit,
@@ -1655,6 +1704,12 @@ private fun VideoChips(
             onClick = onOisToggle,
         )
         ToggleChip(
+            label = "3DNR",
+            active = videoNoiseReductionEnabled,
+            enabled = videoNoiseReductionSupported,
+            onClick = onNoiseReductionToggle,
+        )
+        ToggleChip(
             label = quality.label,
             active = false,
             enabled = true,
@@ -1665,6 +1720,12 @@ private fun VideoChips(
             active = false,
             enabled = supportedFrameRates.size > 1,
             onClick = onFrameRateClick,
+        )
+        ToggleChip(
+            label = "ACTION",
+            active = frameRate == VideoFrameRate.FPS_60 && stabilizationEnabled,
+            enabled = VideoFrameRate.FPS_60 in supportedFrameRates,
+            onClick = onActionToggle,
         )
         ToggleChip(
             label = "SNAP",
@@ -2152,6 +2213,17 @@ private fun openQrResult(context: android.content.Context, value: String) {
         clipboard.setPrimaryClip(ClipData.newPlainText("QR code", value))
         Toast.makeText(context, "QR content copied", Toast.LENGTH_SHORT).show()
     }
+}
+
+private fun findActivity(context: android.content.Context): Activity? {
+    var current = context
+    while (current is ContextWrapper) {
+        if (current is Activity) return current
+        val next = current.baseContext
+        if (next === current) return null
+        current = next
+    }
+    return current as? Activity
 }
 
 private fun lastKnownLocation(manager: LocationManager): Location? =

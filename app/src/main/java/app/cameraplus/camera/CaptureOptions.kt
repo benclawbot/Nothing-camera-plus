@@ -20,9 +20,14 @@ enum class SelfTimer(val label: String, val seconds: Int) {
 enum class FlashChoice(val label: String) {
     OFF("OFF"),
     AUTO("AUTO"),
-    ON("ON");
+    ON("ON"),
+    SCREEN("SCREEN");
 
-    fun next(): FlashChoice = entries[(ordinal + 1) % entries.size]
+    fun next(screenFlashAvailable: Boolean = false): FlashChoice {
+        val choices = if (screenFlashAvailable) entries.toList() else entries.filterNot { it == SCREEN }
+        val index = choices.indexOf(this).coerceAtLeast(0)
+        return choices[(index + 1) % choices.size]
+    }
 }
 
 /** Crop ratios offered by the original camera, including tall-screen crops. */

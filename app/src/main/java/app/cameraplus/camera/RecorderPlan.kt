@@ -111,9 +111,9 @@ object RecorderPlan {
     const val FHD_BASELINE_WIDTH = 1920
     const val FHD_BASELINE_HEIGHT = 1080
 
-    /** Slow motion is capped at 1080p: 4K high speed exists on few phones. */
-    const val MAX_SLOW_MOTION_WIDTH = 1920
-    const val MAX_SLOW_MOTION_HEIGHT = 1080
+    /** Stock mode exposes 4K120 on some products; use it only when HAL lists it. */
+    const val MAX_SLOW_MOTION_WIDTH = 3840
+    const val MAX_SLOW_MOTION_HEIGHT = 2160
 
     /**
      * Ceiling on the predicted frame count. A 0.5 s interval over a day would

@@ -29,4 +29,5 @@ data class SessionCapabilities(
     val macroFocusSupported: Boolean = false,
     val opticalStabilizationSupported: Boolean = false,
     val videoSnapshotSupported: Boolean = false,
+    val videoNoiseReductionSupported: Boolean = false,
 )

@@ -48,7 +48,7 @@ import kotlinx.coroutines.withTimeoutOrNull
  * ## What it does
  *
  * Slow motion reads the back camera's `StreamConfigurationMap`, picks the
- * largest high-speed size at or below 1080p whose fps brackets cover the
+ * largest high-speed size up to 4K whose fps brackets cover the
  * requested rate, and records through
  * [CameraDevice.createConstrainedHighSpeedCaptureSession]. The encoder is told
  * `setCaptureRate(fps)` with `setVideoFrameRate(30)`, so 240 frames of sensor
@@ -145,7 +145,7 @@ class Camera2Recorder(
      * The caller's thread is never blocked on HAL calls: the work happens on
      * the recorder's own thread and each HAL step is awaited with a timeout.
      * Returns the MediaStore `Uri`, or `null` when this camera cannot record
-     * [fps] at any size up to 1080p — [onError] explains why either way.
+     * [fps] at any size up to 4K — [onError] explains why either way.
      *
      * @param audioEnabled best effort, see the class KDoc.
      */
@@ -166,7 +166,7 @@ class Camera2Recorder(
         start(Requested(Kind.TIME_LAPSE, 0, intervalSeconds, audioEnabled))
 
     /**
-     * Capture rates the back camera offers for slow motion at or below 1080p,
+     * Capture rates the back camera offers for slow motion at or below 4K,
      * ascending — the entries a rate picker can show without lying. Empty when
      * the device has no high-speed support. Reads camera characteristics only
      * (no session, no preview), so it is cheap, but it does touch the HAL.
@@ -359,7 +359,7 @@ class Camera2Recorder(
             }
             val option = RecorderPlan.selectSlowMotionSize(options, slow.captureFps)
                 ?: throw IllegalStateException(
-                    "this camera cannot record ${slow.captureFps} fps at 1080p or below; it offers " +
+                     "this camera cannot record ${slow.captureFps} fps up to 4K; it offers " +
                         options.flatMap { it.nominalRates() }.distinct().sorted(),
                 )
             val range = option.bestRange(slow.captureFps)

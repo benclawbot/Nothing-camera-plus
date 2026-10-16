@@ -124,6 +124,7 @@ class CameraSession(
     private var lensFacing = CameraSelector.LENS_FACING_BACK
     private var mode = SessionMode.PHOTO
     private var flashChoice = FlashChoice.OFF
+    private var screenFlash: ImageCapture.ScreenFlash? = null
     private var torchEnabled = false
     private var rawEnabled = false
     @Volatile private var mirrorCaptureEnabled = false
@@ -133,6 +134,7 @@ class CameraSession(
     @Volatile private var watermarkOptions = WatermarkOptions()
     private var stabilizationEnabled = true
     private var opticalStabilizationEnabled = false
+    private var videoNoiseReductionEnabled = false
     private var videoQuality: VideoQuality = VideoQuality.FHD
     private var videoFrameRate: VideoFrameRate = VideoFrameRate.FPS_30
     private var photoAspectRatio = PhotoAspectRatio.FOUR_THREE
@@ -270,6 +272,10 @@ class CameraSession(
     }
 
     fun setFlashChoice(choice: FlashChoice, onError: (Exception) -> Unit = {}) {
+        if (choice == FlashChoice.SCREEN && screenFlash == null) {
+            onError(IllegalStateException("Screen flash is unavailable in this window"))
+            return
+        }
         if (flashChoice == choice) return
         flashChoice = choice
         val desiredZsl = CaptureProfile.usesZeroShutterLag(
@@ -292,6 +298,14 @@ class CameraSession(
     /** Backwards-compatible convenience for callers that need only off/on. */
     fun setFlashEnabled(enabled: Boolean, onError: (Exception) -> Unit = {}) =
         setFlashChoice(if (enabled) FlashChoice.ON else FlashChoice.OFF, onError)
+
+    fun setScreenFlash(screenFlash: ImageCapture.ScreenFlash?) {
+        this.screenFlash = screenFlash
+        if (screenFlash == null && flashChoice == FlashChoice.SCREEN) {
+            flashChoice = FlashChoice.OFF
+            rebind()
+        }
+    }
 
     fun setPhotoAspectRatio(aspectRatio: PhotoAspectRatio, onError: (Exception) -> Unit = {}) {
         if (photoAspectRatio == aspectRatio) return
@@ -535,6 +549,20 @@ class CameraSession(
             return
         }
         opticalStabilizationEnabled = enabled
+        if (mode == SessionMode.VIDEO) rebind(onError)
+    }
+
+    fun setVideoNoiseReductionEnabled(enabled: Boolean, onError: (Exception) -> Unit = {}) {
+        if (videoNoiseReductionEnabled == enabled) return
+        if (isRecording()) {
+            onError(IllegalStateException("Stop recording before changing noise reduction"))
+            return
+        }
+        if (enabled && onCapabilitiesState?.videoNoiseReductionSupported != true) {
+            onError(IllegalStateException("The camera does not report video noise reduction"))
+            return
+        }
+        videoNoiseReductionEnabled = enabled
         if (mode == SessionMode.VIDEO) rebind(onError)
     }
 
@@ -1122,6 +1150,16 @@ class CameraSession(
                     },
                 )
             }
+            if (cameraFlags[targetId]?.noiseReduction == true) {
+                Camera2Interop.Extender(videoBuilder).setCaptureRequestOption(
+                    CaptureRequest.NOISE_REDUCTION_MODE,
+                    if (videoNoiseReductionEnabled) {
+                        CaptureRequest.NOISE_REDUCTION_MODE_HIGH_QUALITY
+                    } else {
+                        CaptureRequest.NOISE_REDUCTION_MODE_OFF
+                    },
+                )
+            }
             val built = videoBuilder.build()
             video = built
             capture = stillCapture
@@ -1157,6 +1195,7 @@ class CameraSession(
             val built = captureBuilder.build().also {
                 it.setCropAspectRatio(Rational(photoAspectRatio.numerator, photoAspectRatio.denominator))
                 it.flashMode = flashMode()
+                if (flashChoice == FlashChoice.SCREEN) screenFlash?.let(it::setScreenFlash)
             }
             capture = built
             useCases += built
@@ -1275,6 +1314,9 @@ class CameraSession(
                 opticalStabilization = camera2.getCameraCharacteristic(
                     CameraCharacteristics.LENS_INFO_AVAILABLE_OPTICAL_STABILIZATION,
                 )?.contains(android.hardware.camera2.CameraMetadata.LENS_OPTICAL_STABILIZATION_MODE_ON) == true,
+                noiseReduction = camera2.getCameraCharacteristic(
+                    CameraCharacteristics.NOISE_REDUCTION_AVAILABLE_NOISE_REDUCTION_MODES,
+                )?.contains(CaptureRequest.NOISE_REDUCTION_MODE_HIGH_QUALITY) == true,
             )
             specs += LensSpec(
                 cameraId = camera2.cameraId,
@@ -1445,6 +1487,7 @@ class CameraSession(
                 ) == true,
                 opticalStabilizationSupported = flags?.opticalStabilization == true,
                 videoSnapshotSupported = mode == SessionMode.VIDEO && videoSnapshotSupported,
+                videoNoiseReductionSupported = flags?.noiseReduction == true,
             )
         onCapabilitiesState = published
         onCapabilities(published)
@@ -1468,6 +1511,7 @@ class CameraSession(
         FlashChoice.OFF -> ImageCapture.FLASH_MODE_OFF
         FlashChoice.AUTO -> ImageCapture.FLASH_MODE_AUTO
         FlashChoice.ON -> ImageCapture.FLASH_MODE_ON
+        FlashChoice.SCREEN -> ImageCapture.FLASH_MODE_SCREEN
     }
 
     private fun shouldMirrorCapture(): Boolean =
@@ -1509,6 +1553,7 @@ private data class CameraFlags(
     val evStep: Float,
     val maxJpegPixels: Long,
     val opticalStabilization: Boolean,
+    val noiseReduction: Boolean,
 )
 
 /** Video finalize carried an error; the partial entry is deleted first. */

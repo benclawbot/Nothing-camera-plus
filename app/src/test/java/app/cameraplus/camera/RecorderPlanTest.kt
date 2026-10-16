@@ -247,10 +247,17 @@ class RecorderPlanTest {
     // ----------------------------------------------------- high-speed sizing
 
     @Test
-    fun largestHighSpeedSizeAtOrBelow1080pIsChosen() {
+    fun largestHighSpeedSizeThatSupportsRateIsChosen() {
         assertEquals(1920, RecorderPlan.selectSlowMotionSize(phoneHighSpeed, 240)!!.width)
-        // The 4K entry exists but 4K slow motion is out of scope.
+        // A 4K entry exists, but it does not advertise 240 fps.
         assertEquals(1920, RecorderPlan.selectSlowMotionSize(fastPhoneHighSpeed, 240)!!.width)
+    }
+
+    @Test
+    fun fourK120IsUsedWhenTheCameraAdvertisesIt() {
+        val option = requireNotNull(RecorderPlan.selectSlowMotionSize(fastPhoneHighSpeed, 120))
+        assertEquals(3840, option.width)
+        assertEquals(2160, option.height)
     }
 
     @Test
