@@ -84,7 +84,8 @@ class CameraSession(
 
         /** Used when the HAL does not report an AE compensation step. */
         const val DEFAULT_EV_STEP = 1f / 3f
-    }
+
+        }
 
     private var cameraProvider: ProcessCameraProvider? = null
     private var boundCamera: Camera? = null
@@ -99,6 +100,7 @@ class CameraSession(
     private var torchEnabled = false
     private var rawEnabled = false
     private var stabilizationEnabled = true
+    private var videoQuality: VideoQuality = VideoQuality.FHD
     private var manualControls = ManualControls()
     private var zeroShutterLagSupported = false
     private var appliedCaptureMode = ImageCapture.CAPTURE_MODE_MINIMIZE_LATENCY
@@ -344,6 +346,46 @@ class CameraSession(
             onError(IllegalStateException("Zoom $ratio is not available on this lens"))
         }
         return applied
+    }
+
+    /**
+     * Video resolution (v1.1). The request is clamped to what the device
+     * reports as supported rather than failing the bind, and only takes effect
+     * in video mode — switching it in photo mode is a no-op until the user
+     * enters video.
+     */
+    fun setVideoQuality(
+        quality: VideoQuality,
+        onError: (Exception) -> Unit = {},
+    ): VideoQuality {
+        val resolved = VideoQuality.resolve(quality, supportedVideoQualities())
+        if (resolved != videoQuality) {
+            videoQuality = resolved
+            if (mode == SessionMode.VIDEO) rebind(onError)
+        }
+        return resolved
+    }
+
+    fun videoQuality(): VideoQuality = videoQuality
+
+    /**
+     * Video tiers the device can actually encode, read from the recorder's
+     * own quality list so the picker never offers something unsupported.
+     */
+    private fun supportedVideoQualities(): Set<VideoQuality> {
+        val info = boundCamera?.cameraInfo ?: return emptySet()
+        return runCatching { QualitySelector.getSupportedQualities(info) }
+            .getOrNull()
+            .orEmpty()
+            .mapNotNull { quality ->
+                when (quality) {
+                    Quality.HD -> VideoQuality.HD
+                    Quality.FHD -> VideoQuality.FHD
+                    Quality.UHD -> VideoQuality.UHD
+                    else -> null
+                }
+            }
+            .toSet()
     }
 
     fun setStabilizationEnabled(enabled: Boolean, onError: (Exception) -> Unit = {}) {
@@ -640,10 +682,17 @@ class CameraSession(
         var video: VideoCapture<Recorder>? = null
 
         if (mode == SessionMode.VIDEO) {
+            val requested = when (videoQuality) {
+                VideoQuality.HD -> Quality.HD
+                VideoQuality.FHD -> Quality.FHD
+                VideoQuality.UHD -> Quality.UHD
+            }
             val recorder = Recorder.Builder()
                 .setQualitySelector(
                     QualitySelector.from(
-                        Quality.FHD,
+                        requested,
+                        // Prefer the requested tier, step down to what the
+                        // encoder actually accepts rather than failing.
                         FallbackStrategy.lowerQualityOrHigherThan(Quality.HD),
                     ),
                 )

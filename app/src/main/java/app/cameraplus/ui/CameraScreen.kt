@@ -70,6 +70,9 @@ import app.cameraplus.camera.LensZoomPlan
 import app.cameraplus.camera.ManualControlPlan
 import app.cameraplus.camera.ManualControls
 import app.cameraplus.camera.CameraSession
+import app.cameraplus.camera.CaptureTimer
+import app.cameraplus.camera.SelfTimer
+import app.cameraplus.camera.VideoQuality
 import app.cameraplus.camera.SessionCapabilities
 import app.cameraplus.camera.SessionMode
 import app.cameraplus.camera.StabilizationLevel
@@ -142,6 +145,11 @@ fun CameraScreen() {
         )
     }
     var stabilizationEnabled by remember { mutableStateOf(true) }
+    var videoQuality by remember { mutableStateOf(VideoQuality.FHD) }
+    var selfTimer by remember { mutableStateOf(SelfTimer.OFF) }
+    var timerDeadline by remember { mutableStateOf(0L) }
+    var timerLeft by remember { mutableIntStateOf(0) }
+    var pendingShot by remember { mutableStateOf(false) }
     var rawEnabled by remember { mutableStateOf(false) }
     var isoGauge by remember { mutableStateOf(0f) }
     var speedGauge by remember { mutableStateOf(0f) }
@@ -207,6 +215,47 @@ fun CameraScreen() {
             delay(500)
         }
         if (!recording) recordSeconds = 0
+    }
+
+    // Fires one still through the session, with the current look applied.
+    fun captureNow() {
+        session.capture(
+            settings = processing,
+            onSaved = {
+                inFlight--
+                status = "Saved"
+            },
+            onNote = { note -> status = note },
+            onError = { error ->
+                inFlight--
+                status = error.message ?: "Capture failed"
+            },
+        )
+    }
+
+    // Self-timer countdown; zero means idle.
+    LaunchedEffect(timerDeadline) {
+        if (timerDeadline == 0L) {
+            timerLeft = 0
+            return@LaunchedEffect
+        }
+        while (true) {
+            val left = CaptureTimer.remaining(
+                seconds = selfTimer.seconds,
+                startedAtMillis = timerDeadline - selfTimer.seconds * 1000L,
+                nowMillis = System.currentTimeMillis(),
+            )
+            timerLeft = left
+            if (left <= 0) {
+                timerDeadline = 0L
+                if (pendingShot) {
+                    pendingShot = false
+                    captureNow()
+                }
+                break
+            }
+            delay(200)
+        }
     }
 
     Box(
@@ -331,6 +380,22 @@ fun CameraScreen() {
                 )
             }
             Row(verticalAlignment = Alignment.CenterVertically) {
+                if (mode == CameraMode.PHOTO) {
+                    ToggleChip(
+                        label = "TIMER ${selfTimer.label}",
+                        active = selfTimer.enabled,
+                        enabled = true,
+                        onClick = {
+                            selfTimer = selfTimer.next()
+                            if (!selfTimer.enabled && timerDeadline != 0L) {
+                                // Cancel a running countdown: give the shot back.
+                                timerDeadline = 0L
+                                timerLeft = 0
+                                pendingShot = false
+                            }
+                        },
+                    )
+                }
                 IconButton(onClick = { guides = guides.next() }) {
                     Icon(
                         imageVector = Icons.Outlined.GridOn,
@@ -346,6 +411,20 @@ fun CameraScreen() {
                     )
                 }
             }
+        }
+
+        if (timerLeft > 0) {
+            Text(
+                text = String.format(Locale.US, "%d", timerLeft),
+                color = White,
+                fontFamily = FontFamily.Monospace,
+                style = MaterialTheme.typography.displayMedium,
+                modifier = Modifier
+                    .align(Alignment.Center)
+                    .clip(CircleShape)
+                    .background(Color(0x59000000))
+                    .padding(horizontal = 22.dp, vertical = 10.dp),
+            )
         }
 
         if (recording) {
@@ -412,6 +491,7 @@ fun CameraScreen() {
                         stabilizationEnabled = stabilizationEnabled,
                         stabilization = capabilities.stabilization,
                         micEnabled = micEnabled,
+                        quality = videoQuality,
                         onStabToggle = {
                             val next = !stabilizationEnabled
                             stabilizationEnabled = next
@@ -433,6 +513,12 @@ fun CameraScreen() {
                                 status = "Microphone on"
                             } else {
                                 audioPermission.launch(Manifest.permission.RECORD_AUDIO)
+                            }
+                        },
+                        onQualityClick = {
+                            val next = videoQuality.next()
+                            videoQuality = session.setVideoQuality(next) { error ->
+                                status = error.message ?: "Could not change resolution"
                             }
                         },
                     )
@@ -554,20 +640,13 @@ fun CameraScreen() {
                             // burst tapping feels instant like the stock app.
                             inFlight++
                             shutterPulse++
-                            session.capture(
-                                settings = processing,
-                                onSaved = {
-                                    inFlight--
-                                    status = "Saved"
-                                },
-                                onNote = { note ->
-                                    status = note
-                                },
-                                onError = { error ->
-                                    inFlight--
-                                    status = error.message ?: "Capture failed"
-                                },
-                            )
+                            if (selfTimer.enabled && timerDeadline == 0L) {
+                                pendingShot = true
+                                timerDeadline = System.currentTimeMillis() +
+                                    selfTimer.seconds * 1000L
+                            } else {
+                                captureNow()
+                            }
                         },
                     )
                 }
@@ -672,8 +751,10 @@ private fun VideoChips(
     stabilizationEnabled: Boolean,
     stabilization: StabilizationLevel,
     micEnabled: Boolean,
+    quality: VideoQuality,
     onStabToggle: () -> Unit,
     onMicToggle: () -> Unit,
+    onQualityClick: () -> Unit,
 ) {
     Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
         ToggleChip(
@@ -687,6 +768,12 @@ private fun VideoChips(
             active = micEnabled,
             enabled = true,
             onClick = onMicToggle,
+        )
+        ToggleChip(
+            label = quality.label,
+            active = false,
+            enabled = true,
+            onClick = onQualityClick,
         )
     }
 }
