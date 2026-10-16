@@ -1,6 +1,7 @@
 package app.cameraplus.media
 
 import android.content.ContentUris
+import android.content.ContentValues
 import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
@@ -29,6 +30,7 @@ object MediaLibrary {
         val displayName: String,
         val dateMillis: Long,
         val sizeBytes: Long,
+        val isFavorite: Boolean,
     )
 
     private val IMAGE_PROJECTION = arrayOf(
@@ -36,6 +38,7 @@ object MediaLibrary {
         MediaStore.Images.Media.DISPLAY_NAME,
         MediaStore.Images.Media.DATE_ADDED,
         MediaStore.Images.Media.SIZE,
+        MediaStore.MediaColumns.IS_FAVORITE,
     )
 
     private val VIDEO_PROJECTION = arrayOf(
@@ -43,6 +46,7 @@ object MediaLibrary {
         MediaStore.Video.Media.DISPLAY_NAME,
         MediaStore.Video.Media.DATE_ADDED,
         MediaStore.Video.Media.SIZE,
+        MediaStore.MediaColumns.IS_FAVORITE,
     )
 
     /** Newest first, photos and videos interleaved. */
@@ -93,6 +97,7 @@ object MediaLibrary {
                 val nameColumn = cursor.getColumnIndexOrThrow(MediaStore.MediaColumns.DISPLAY_NAME)
                 val dateColumn = cursor.getColumnIndexOrThrow(MediaStore.MediaColumns.DATE_ADDED)
                 val sizeColumn = cursor.getColumnIndexOrThrow(MediaStore.MediaColumns.SIZE)
+                val favoriteColumn = cursor.getColumnIndex(MediaStore.MediaColumns.IS_FAVORITE)
                 buildList {
                     while (cursor.moveToNext() && size < limit) {
                         val id = cursor.getLong(idColumn)
@@ -103,6 +108,7 @@ object MediaLibrary {
                                 displayName = cursor.getString(nameColumn) ?: "Camera+",
                                 dateMillis = cursor.getLong(dateColumn) * 1000L,
                                 sizeBytes = cursor.getLong(sizeColumn),
+                                isFavorite = favoriteColumn >= 0 && cursor.getInt(favoriteColumn) != 0,
                             ),
                         )
                     }
@@ -134,5 +140,23 @@ object MediaLibrary {
                     BitmapFactory.decodeStream(it, null, options)
                 }
             }.getOrNull()
+        }
+
+    /** Sets MediaStore's favorite bit for an item owned by the app. */
+    suspend fun setFavorite(context: Context, item: Item, favorite: Boolean): Boolean =
+        withContext(Dispatchers.IO) {
+            runCatching {
+                val values = ContentValues().apply {
+                    put(MediaStore.MediaColumns.IS_FAVORITE, if (favorite) 1 else 0)
+                }
+                context.contentResolver.update(item.uri, values, null, null) > 0
+            }.getOrDefault(false)
+        }
+
+    /** Deletes one Camera+ item from MediaStore. */
+    suspend fun delete(context: Context, item: Item): Boolean =
+        withContext(Dispatchers.IO) {
+            runCatching { context.contentResolver.delete(item.uri, null, null) > 0 }
+                .getOrDefault(false)
         }
 }

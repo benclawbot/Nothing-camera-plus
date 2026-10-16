@@ -14,5 +14,7 @@ object CaptureProfile {
         flashEnabled: Boolean,
         rawEnabled: Boolean = false,
         manualControlsActive: Boolean = false,
-    ): Boolean = zslSupported && !flashEnabled && !rawEnabled && !manualControlsActive
+        highResolutionActive: Boolean = false,
+    ): Boolean = zslSupported && !flashEnabled && !rawEnabled &&
+        !manualControlsActive && !highResolutionActive
 }

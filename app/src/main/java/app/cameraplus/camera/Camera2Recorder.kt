@@ -5,6 +5,7 @@ import android.content.ContentValues
 import android.content.Context
 import android.content.pm.PackageManager
 import android.graphics.SurfaceTexture
+import android.location.Location
 import android.hardware.camera2.CameraAccessException
 import android.hardware.camera2.CameraCaptureSession
 import android.hardware.camera2.CameraCharacteristics
@@ -124,10 +125,16 @@ class Camera2Recorder(
     private var worker: HandlerThread? = null
     private var workerHandler: Handler? = null
     private var starting = false
+    @Volatile private var recordingLocation: Location? = null
 
     /** `true` while a clip is running or still being set up. */
     val isRecording: Boolean
         get() = synchronized(lock) { active != null || starting }
+
+    /** Explicit opt-in geotag for subsequently created video entries. */
+    fun setLocation(location: Location?) {
+        recordingLocation = location?.let(::Location)
+    }
 
     // ---------------------------------------------------------------- public
 
@@ -647,6 +654,10 @@ class Camera2Recorder(
             put(MediaStore.Video.Media.DISPLAY_NAME, label)
             put(MediaStore.Video.Media.MIME_TYPE, MIME_TYPE)
             put(MediaStore.Video.Media.RELATIVE_PATH, Environment.DIRECTORY_MOVIES + "/" + ALBUM)
+            recordingLocation?.let { location ->
+                put(MediaStore.Video.Media.LATITUDE, location.latitude)
+                put(MediaStore.Video.Media.LONGITUDE, location.longitude)
+            }
             // Invisible to other apps until the clip is finalised.
             put(MediaStore.Video.Media.IS_PENDING, 1)
         }

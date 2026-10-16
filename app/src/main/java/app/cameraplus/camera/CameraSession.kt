@@ -8,23 +8,34 @@ import android.graphics.ImageFormat
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.Matrix
+import android.hardware.camera2.params.RggbChannelVector
+import android.location.Location
+import android.media.MediaActionSound
 import android.hardware.camera2.CameraCharacteristics
 import android.hardware.camera2.CaptureRequest
 import android.net.Uri
 import android.provider.MediaStore
+import android.util.Range
+import android.util.Rational
 import androidx.camera.camera2.interop.Camera2CameraInfo
 import androidx.camera.camera2.interop.Camera2Interop
 import androidx.camera.core.Camera
 import androidx.camera.core.CameraFilter
 import androidx.camera.core.CameraSelector
 import androidx.camera.core.FocusMeteringAction
+import androidx.camera.core.ImageAnalysis
 import androidx.camera.core.ImageCapture
 import androidx.camera.core.ImageCaptureException
 import androidx.camera.core.ImageProxy
+import androidx.camera.core.MirrorMode
 import androidx.camera.core.Preview
 import androidx.camera.core.SessionConfig
 import androidx.camera.core.UseCase
+import androidx.camera.core.resolutionselector.ResolutionSelector
+import androidx.camera.core.resolutionselector.ResolutionStrategy
 import androidx.camera.lifecycle.ProcessCameraProvider
+import androidx.camera.extensions.ExtensionMode
+import androidx.camera.extensions.ExtensionsManager
 import androidx.camera.video.FallbackStrategy
 import androidx.camera.video.MediaStoreOutputOptions
 import androidx.camera.video.Quality
@@ -35,9 +46,12 @@ import androidx.camera.video.VideoCapture
 import androidx.camera.video.VideoRecordEvent
 import androidx.camera.view.PreviewView
 import androidx.core.content.ContextCompat
+import androidx.exifinterface.media.ExifInterface
 import androidx.lifecycle.LifecycleOwner
 import app.cameraplus.processing.JpegProcessor
+import app.cameraplus.processing.WatermarkRenderer
 import app.cameraplus.settings.ProcessingSettings
+import app.cameraplus.settings.WatermarkOptions
 import java.util.concurrent.Executor
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
@@ -77,6 +91,7 @@ class CameraSession(
 ) {
     private val mainExecutor: Executor = ContextCompat.getMainExecutor(context)
     private val ioExecutor: Executor = Executors.newSingleThreadExecutor()
+    private val qrExecutor: Executor = Executors.newSingleThreadExecutor()
 
     private companion object {
         /** How long a plain tap-to-focus keeps its metering point. */
@@ -88,24 +103,40 @@ class CameraSession(
         /** Used when the HAL does not report an AE compensation step. */
         const val DEFAULT_EV_STEP = 1f / 3f
 
-        }
+        /** Above this size, expose a distinct MAX capture option. */
+        const val STANDARD_PHOTO_PIXEL_THRESHOLD = 12_000_000L
+    }
 
     private var cameraProvider: ProcessCameraProvider? = null
+    private var extensionsManager: ExtensionsManager? = null
+    private var requestedExtensionMode: Int = ExtensionMode.NONE
+    private var activeExtensionMode: Int = ExtensionMode.NONE
     private var suspended = false
     private var boundCamera: Camera? = null
     private var imageCapture: ImageCapture? = null
     private var videoCapture: VideoCapture<Recorder>? = null
+    private var imageAnalysis: ImageAnalysis? = null
     private var boundPreviewView: PreviewView? = null
     private var onZslChanged: (Boolean) -> Unit = {}
     private var onCapabilities: (SessionCapabilities) -> Unit = {}
+    private var onQrCode: (String) -> Unit = {}
     private var lensFacing = CameraSelector.LENS_FACING_BACK
     private var mode = SessionMode.PHOTO
-    private var flashEnabled = false
+    private var flashChoice = FlashChoice.OFF
     private var torchEnabled = false
     private var rawEnabled = false
+    @Volatile private var mirrorCaptureEnabled = false
+    private var shutterSoundEnabled = true
+    private var shutterSound: MediaActionSound? = null
+    @Volatile private var captureLocation: Location? = null
+    @Volatile private var watermarkOptions = WatermarkOptions()
     private var stabilizationEnabled = true
     private var videoQuality: VideoQuality = VideoQuality.FHD
+    private var videoFrameRate: VideoFrameRate = VideoFrameRate.FPS_30
+    private var photoAspectRatio = PhotoAspectRatio.FOUR_THREE
+    private var photoResolution = PhotoResolution.STANDARD
     private var manualControls = ManualControls()
+    private var macroEnabled = false
     private var zeroShutterLagSupported = false
     private var appliedCaptureMode = ImageCapture.CAPTURE_MODE_MINIMIZE_LATENCY
 
@@ -130,18 +161,25 @@ class CameraSession(
         previewView: PreviewView,
         onZslChanged: (Boolean) -> Unit = {},
         onCapabilities: (SessionCapabilities) -> Unit = {},
+        onQrCode: (String) -> Unit = {},
         onError: (Exception) -> Unit = {},
     ) {
         suspended = false
         boundPreviewView = previewView
         this.onZslChanged = onZslChanged
         this.onCapabilities = onCapabilities
+        this.onQrCode = onQrCode
         errorSink = onError
         val future = ProcessCameraProvider.getInstance(context)
         future.addListener({
             try {
-                cameraProvider = future.get()
-                rebind()
+                val provider = future.get()
+                cameraProvider = provider
+                val extensionsFuture = ExtensionsManager.getInstanceAsync(context, provider)
+                extensionsFuture.addListener({
+                    extensionsManager = runCatching { extensionsFuture.get() }.getOrNull()
+                    rebind()
+                }, mainExecutor)
             } catch (t: Throwable) {
                 onError(t.asException())
             }
@@ -158,6 +196,10 @@ class CameraSession(
         boundCamera = null
         imageCapture = null
         videoCapture = null
+        imageAnalysis?.clearAnalyzer()
+        imageAnalysis = null
+        shutterSound?.release()
+        shutterSound = null
     }
 
     /**
@@ -169,14 +211,41 @@ class CameraSession(
         onError: (Exception) -> Unit = {},
         bindAfterChange: Boolean = true,
     ) {
-        if (newMode == mode) return
+        setProfile(newMode, requestedExtensionMode, onError, bindAfterChange, macroEnabled)
+    }
+
+    /** Atomically switches use-case shape and optional OEM extension profile. */
+    fun setProfile(
+        newMode: SessionMode,
+        extensionMode: Int,
+        onError: (Exception) -> Unit = {},
+        bindAfterChange: Boolean = true,
+        macroMode: Boolean = macroEnabled,
+    ) {
+        if (newMode == mode && extensionMode == requestedExtensionMode && macroMode == macroEnabled) return
         if (isRecording()) {
             onError(IllegalStateException("Stop recording before switching modes"))
             return
         }
+        if (macroMode && onCapabilitiesState?.macroFocusSupported != true) {
+            onError(IllegalStateException("This camera does not expose macro autofocus"))
+            return
+        }
         mode = newMode
+        requestedExtensionMode = if (newMode == SessionMode.VIDEO) ExtensionMode.NONE else extensionMode
+        macroEnabled = newMode != SessionMode.VIDEO && macroMode
+        if (newMode == SessionMode.VIDEO) rawEnabled = false
         if (mode != SessionMode.VIDEO) torchEnabled = false
         if (bindAfterChange) rebind(onError)
+    }
+
+    /**
+     * Requests an OEM-provided CameraX extension when one is available. The
+     * rest of the app remains the clean-room fallback; this never copies or
+     * depends on a manufacturer's private implementation.
+     */
+    fun setExtensionMode(extensionMode: Int, onError: (Exception) -> Unit = {}) {
+        setProfile(mode, extensionMode, onError, macroMode = macroEnabled)
     }
 
     fun flipLens(onError: (Exception) -> Unit = {}) {
@@ -195,14 +264,15 @@ class CameraSession(
         rebind(onError)
     }
 
-    fun setFlashEnabled(enabled: Boolean, onError: (Exception) -> Unit = {}) {
-        if (flashEnabled == enabled) return
-        flashEnabled = enabled
+    fun setFlashChoice(choice: FlashChoice, onError: (Exception) -> Unit = {}) {
+        if (flashChoice == choice) return
+        flashChoice = choice
         val desiredZsl = CaptureProfile.usesZeroShutterLag(
-            zslSupported = zeroShutterLagSupported,
-            flashEnabled = flashEnabled,
+            zslSupported = zeroShutterLagSupported && requestedExtensionMode == ExtensionMode.NONE,
+            flashEnabled = flashChoice != FlashChoice.OFF,
             rawEnabled = rawEnabled,
             manualControlsActive = !manualControls.isAuto(),
+            highResolutionActive = photoResolution == PhotoResolution.MAXIMUM,
         )
         val appliedZsl = appliedCaptureMode == ImageCapture.CAPTURE_MODE_ZERO_SHUTTER_LAG
         if (desiredZsl != appliedZsl) {
@@ -213,6 +283,43 @@ class CameraSession(
             imageCapture?.flashMode = flashMode()
         }
     }
+
+    /** Backwards-compatible convenience for callers that need only off/on. */
+    fun setFlashEnabled(enabled: Boolean, onError: (Exception) -> Unit = {}) =
+        setFlashChoice(if (enabled) FlashChoice.ON else FlashChoice.OFF, onError)
+
+    fun setPhotoAspectRatio(aspectRatio: PhotoAspectRatio, onError: (Exception) -> Unit = {}) {
+        if (photoAspectRatio == aspectRatio) return
+        photoAspectRatio = aspectRatio
+        if (mode != SessionMode.VIDEO) rebind(onError)
+    }
+
+    fun setPhotoResolution(resolution: PhotoResolution, onError: (Exception) -> Unit = {}) {
+        if (photoResolution == resolution) return
+        photoResolution = resolution
+        if (mode != SessionMode.VIDEO) rebind(onError)
+    }
+
+    fun setVideoFrameRate(
+        requested: VideoFrameRate,
+        onError: (Exception) -> Unit = {},
+    ): VideoFrameRate {
+        val supported = onCapabilitiesState?.supportedVideoFrameRates
+        val resolved = if (supported == null || requested in supported) {
+            requested
+        } else {
+            supported.firstOrNull { it == VideoFrameRate.FPS_30 } ?: supported.first()
+        }
+        if (resolved != videoFrameRate) {
+            videoFrameRate = resolved
+            if (mode == SessionMode.VIDEO) rebind(onError)
+        }
+        return resolved
+    }
+
+    fun videoFrameRate(): VideoFrameRate = videoFrameRate
+
+    private var onCapabilitiesState: SessionCapabilities? = null
 
     /** Video-mode light: the steady torch rather than the still-capture flash. */
     fun setTorchEnabled(enabled: Boolean) {
@@ -368,7 +475,11 @@ class CameraSession(
         quality: VideoQuality,
         onError: (Exception) -> Unit = {},
     ): VideoQuality {
-        val resolved = VideoQuality.resolve(quality, supportedVideoQualities())
+        val resolved = if (boundCamera == null) {
+            quality
+        } else {
+            VideoQuality.resolve(quality, supportedVideoQualities())
+        }
         if (resolved != videoQuality) {
             videoQuality = resolved
             if (mode == SessionMode.VIDEO) rebind(onError)
@@ -414,10 +525,33 @@ class CameraSession(
         if (mode != SessionMode.VIDEO) rebind(onError)
     }
 
+    fun setMirrorCaptureEnabled(enabled: Boolean) {
+        mirrorCaptureEnabled = enabled
+    }
+
+    fun setShutterSoundEnabled(enabled: Boolean) {
+        shutterSoundEnabled = enabled
+    }
+
+    /** Explicit opt-in location metadata for still captures. */
+    fun setCaptureLocation(location: Location?) {
+        captureLocation = location?.let(::Location)
+    }
+
+    fun setWatermarkOptions(options: WatermarkOptions) {
+        watermarkOptions = options.copy(authorName = options.authorName.take(32))
+    }
+
     fun setManualControls(controls: ManualControls, onError: (Exception) -> Unit = {}) {
         if (manualControls == controls) return
         manualControls = controls
         if (mode != SessionMode.VIDEO) rebind(onError)
+    }
+
+    /** Requests Camera2's dedicated macro AF mode when the lens reports it. */
+    fun setMacroEnabled(enabled: Boolean, onError: (Exception) -> Unit = {}) {
+        if (macroEnabled == enabled) return
+        setProfile(mode, requestedExtensionMode, onError, macroMode = enabled)
     }
 
     /**
@@ -437,7 +571,8 @@ class CameraSession(
         }
         when {
             rawEnabled -> captureRawToFile(capture, onSaved, onError)
-            settings == ProcessingSettings.NATURAL -> captureToFile(capture, onSaved, onError)
+            settings == ProcessingSettings.NATURAL && !watermarkOptions.enabled ->
+                captureToFile(capture, onSaved, onError)
             else -> captureToMemory(capture, settings, onSaved, onNote, onError)
         }
     }
@@ -462,6 +597,8 @@ class CameraSession(
             return
         }
         capture.takePicture(mainExecutor, object : ImageCapture.OnImageCapturedCallback() {
+            override fun onCaptureStarted() = playShutterSound()
+
             override fun onCaptureSuccess(image: ImageProxy) {
                 val captured = runCatching {
                     image.toJpegBytes() to image.imageInfo.rotationDegrees
@@ -476,9 +613,15 @@ class CameraSession(
                     )
                     return
                 }
+                val mirror = shouldMirrorCapture()
                 ioExecutor.execute {
                     try {
-                        val frame = decodePixelFrame(jpeg, rotation, maxDimension)
+                        val frame = decodePixelFrame(
+                            jpeg,
+                            rotation,
+                            maxDimension,
+                            mirrorHorizontal = mirror,
+                        )
                             ?: throw IllegalStateException("Could not decode the captured frame")
                         mainExecutor.execute { onFrame(frame) }
                     } catch (t: Throwable) {
@@ -523,10 +666,12 @@ class CameraSession(
                 val image = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
                 bitmap = image
                 image.setPixels(pixels, 0, width, 0, 0, width, height)
+                WatermarkRenderer.draw(image, watermarkOptions, captureLocation)
                 val saved = context.contentResolver.openOutputStream(uri)?.use { out ->
                     image.compress(Bitmap.CompressFormat.JPEG, 95, out)
                 } ?: false
                 if (!saved) throw IllegalStateException("Could not encode the processed JPEG")
+                writeLocationExif(uri)
                 mainExecutor.execute { onSaved(uri) }
             } catch (t: Throwable) {
                 context.contentResolver.delete(uri, null, null)
@@ -555,6 +700,10 @@ class CameraSession(
             put(MediaStore.Video.Media.DISPLAY_NAME, "CameraPlus_${System.currentTimeMillis()}.mp4")
             put(MediaStore.Video.Media.MIME_TYPE, "video/mp4")
             put(MediaStore.Video.Media.RELATIVE_PATH, "Movies/Camera+")
+            captureLocation?.let { location ->
+                put(MediaStore.Video.Media.LATITUDE, location.latitude)
+                put(MediaStore.Video.Media.LONGITUDE, location.longitude)
+            }
         }
         val options = MediaStoreOutputOptions.Builder(
             context.contentResolver,
@@ -630,9 +779,11 @@ class CameraSession(
 
         val rawOptions = ImageCapture.OutputFileOptions
             .Builder(context.contentResolver, rawUri, rawValues)
+            .setMetadata(captureMetadata())
             .build()
         val jpegOptions = ImageCapture.OutputFileOptions
             .Builder(context.contentResolver, jpegUri, jpegValues)
+            .setMetadata(captureMetadata())
             .build()
 
         var completed = false
@@ -649,6 +800,8 @@ class CameraSession(
             jpegOptions,
             mainExecutor,
             object : ImageCapture.OnImageSavedCallback {
+                override fun onCaptureStarted() = playShutterSound()
+
                 override fun onImageSaved(outputFileResults: ImageCapture.OutputFileResults) {
                     // CameraX calls once per output. Wait until both files are
                     // confirmed before telling the UI the pair is complete;
@@ -696,8 +849,11 @@ class CameraSession(
         val (uri, values) = entry
         val options = ImageCapture.OutputFileOptions
             .Builder(context.contentResolver, uri, values)
+            .setMetadata(captureMetadata())
             .build()
         capture.takePicture(options, mainExecutor, object : ImageCapture.OnImageSavedCallback {
+            override fun onCaptureStarted() = playShutterSound()
+
             override fun onImageSaved(outputFileResults: ImageCapture.OutputFileResults) {
                 onSaved(outputFileResults.savedUri ?: uri)
             }
@@ -724,6 +880,8 @@ class CameraSession(
         }
         val (uri, _) = entry
         capture.takePicture(mainExecutor, object : ImageCapture.OnImageCapturedCallback() {
+            override fun onCaptureStarted() = playShutterSound()
+
             override fun onCaptureSuccess(image: ImageProxy) {
                 val jpeg = image.toJpegBytes()
                 image.close()
@@ -736,7 +894,14 @@ class CameraSession(
                 ioExecutor.execute {
                     try {
                         val processed = resolver.openOutputStream(uri)?.use { out ->
-                            JpegProcessor.process(jpeg, settings, out)
+                            JpegProcessor.process(
+                                jpeg,
+                                settings,
+                                out,
+                                mirrorHorizontal = shouldMirrorCapture(),
+                                watermark = watermarkOptions,
+                                location = captureLocation,
+                            )
                         } ?: throw IllegalStateException("Could not open the output stream")
                         if (!processed) {
                             // The look could not be applied (frame too large,
@@ -744,9 +909,10 @@ class CameraSession(
                             resolver.openOutputStream(uri)?.use { it.write(jpeg) }
                                 ?: throw IllegalStateException("Could not write the capture")
                             mainExecutor.execute {
-                                onNote("Saved without the look — frame too large to process")
+                                onNote("Saved without optional processing/watermark — frame too large")
                             }
                         }
+                        writeLocationExif(uri)
                         mainExecutor.execute { onSaved(uri) }
                     } catch (t: Throwable) {
                         resolver.delete(uri, null, null)
@@ -774,6 +940,7 @@ class CameraSession(
         jpeg: ByteArray,
         rotationDegrees: Int,
         maxDimension: Int,
+        mirrorHorizontal: Boolean,
     ): PixelFrame? {
         val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
         BitmapFactory.decodeByteArray(jpeg, 0, jpeg.size, bounds)
@@ -790,8 +957,11 @@ class CameraSession(
         var bitmap = BitmapFactory.decodeByteArray(jpeg, 0, jpeg.size, options) ?: return null
         try {
             val normalizedRotation = ((rotationDegrees % 360) + 360) % 360
-            if (normalizedRotation != 0) {
-                val matrix = Matrix().apply { postRotate(normalizedRotation.toFloat()) }
+            if (normalizedRotation != 0 || mirrorHorizontal) {
+                val matrix = Matrix().apply {
+                    if (normalizedRotation != 0) postRotate(normalizedRotation.toFloat())
+                    if (mirrorHorizontal) postScale(-1f, 1f)
+                }
                 val rotated = Bitmap.createBitmap(
                     bitmap,
                     0,
@@ -849,19 +1019,51 @@ class CameraSession(
         val targetId = selectedCameraId ?: layout.referenceCameraId
         if (targetId != selectedCameraId) selectedCameraId = targetId
         if (rawEnabled && cameraFlags[targetId]?.raw != true) rawEnabled = false
+        if (photoResolution == PhotoResolution.MAXIMUM &&
+            (cameraFlags[targetId]?.maxJpegPixels ?: 0L) <= STANDARD_PHOTO_PIXEL_THRESHOLD
+        ) {
+            photoResolution = PhotoResolution.STANDARD
+        }
         zeroShutterLagSupported = cameraFlags[targetId]?.zeroShutterLag ?: false
-        val captureMode = desiredCaptureMode()
+        val captureMode = if (mode == SessionMode.VIDEO) {
+            ImageCapture.CAPTURE_MODE_MINIMIZE_LATENCY
+        } else {
+            desiredCaptureMode()
+        }
 
         val preview = Preview.Builder().build().also {
             it.setSurfaceProvider(previewView.surfaceProvider)
         }
-        val selector = selectorForCamera(targetId)
+        val baseSelector = selectorForCamera(targetId)
+        val desiredExtension = if (mode == SessionMode.VIDEO) {
+            ExtensionMode.NONE
+        } else {
+            requestedExtensionMode
+        }
+        val manager = extensionsManager
+        val extensionSelector = runCatching {
+            if (desiredExtension != ExtensionMode.NONE && manager != null &&
+                manager.isExtensionAvailable(baseSelector, desiredExtension)
+            ) {
+                manager.getExtensionEnabledCameraSelector(baseSelector, desiredExtension)
+            } else {
+                null
+            }
+        }.getOrNull()
+        activeExtensionMode = if (extensionSelector != null) desiredExtension else ExtensionMode.NONE
+        val selector = extensionSelector ?: baseSelector
 
         val useCases = mutableListOf<UseCase>(preview)
         var capture: ImageCapture? = null
         var video: VideoCapture<Recorder>? = null
+        var analysis: ImageAnalysis? = null
 
         if (mode == SessionMode.VIDEO) {
+            val supportedFrameRates = videoFrameRateOptions(provider, targetId)
+            if (videoFrameRate !in supportedFrameRates) {
+                videoFrameRate = supportedFrameRates.firstOrNull { it == VideoFrameRate.FPS_30 }
+                    ?: supportedFrameRates.first()
+            }
             val requested = when (videoQuality) {
                 VideoQuality.HD -> Quality.HD
                 VideoQuality.FHD -> Quality.FHD
@@ -877,10 +1079,33 @@ class CameraSession(
                     ),
                 )
                 .build()
+            val stillCapture = ImageCapture.Builder()
+                .setCaptureMode(ImageCapture.CAPTURE_MODE_MINIMIZE_LATENCY)
+                .build()
+                .also { image ->
+                    image.setCropAspectRatio(Rational(photoAspectRatio.numerator, photoAspectRatio.denominator))
+                    image.flashMode = ImageCapture.FLASH_MODE_OFF
+                }
             val built = VideoCapture.Builder(recorder)
                 .setVideoStabilizationEnabled(stabilizationEnabled)
+                .setTargetFrameRate(Range(videoFrameRate.fps, videoFrameRate.fps))
+                .setMirrorMode(
+                    if (mirrorCaptureEnabled) MirrorMode.MIRROR_MODE_ON_FRONT_ONLY
+                    else MirrorMode.MIRROR_MODE_OFF,
+                )
                 .build()
             video = built
+            capture = stillCapture
+            useCases += stillCapture
+            useCases += built
+        } else if (mode == SessionMode.QR) {
+            val built = ImageAnalysis.Builder()
+                .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
+                .build()
+            built.setAnalyzer(qrExecutor, QrCodeAnalyzer { value ->
+                mainExecutor.execute { onQrCode(value) }
+            })
+            analysis = built
             useCases += built
         } else {
             val captureBuilder = ImageCapture.Builder()
@@ -892,8 +1117,18 @@ class CameraSession(
                         ImageCapture.OUTPUT_FORMAT_JPEG
                     },
                 )
+            if (photoResolution == PhotoResolution.MAXIMUM) {
+                captureBuilder.setResolutionSelector(
+                    ResolutionSelector.Builder()
+                        .setResolutionStrategy(ResolutionStrategy.HIGHEST_AVAILABLE_STRATEGY)
+                        .build(),
+                )
+            }
             applyManualControls(captureBuilder)
-            val built = captureBuilder.build().also { it.flashMode = flashMode() }
+            val built = captureBuilder.build().also {
+                it.setCropAspectRatio(Rational(photoAspectRatio.numerator, photoAspectRatio.denominator))
+                it.flashMode = flashMode()
+            }
             capture = built
             useCases += built
         }
@@ -905,6 +1140,7 @@ class CameraSession(
         boundCamera = try {
             provider.bindToLifecycle(lifecycleOwner, selector, sessionConfig)
         } catch (t: Throwable) {
+            activeExtensionMode = ExtensionMode.NONE
             // The chosen camera id can disappear (privacy toggle, concurrent
             // use). Fall back to the platform default for this facing.
             selectedCameraId = null
@@ -916,6 +1152,7 @@ class CameraSession(
         }
         imageCapture = capture
         videoCapture = video
+        imageAnalysis = analysis
         appliedCaptureMode = captureMode
         if (torchEnabled && mode == SessionMode.VIDEO) {
             boundCamera?.cameraControl?.enableTorch(true)
@@ -978,6 +1215,10 @@ class CameraSession(
                 evStep = camera2.getCameraCharacteristic(
                     CameraCharacteristics.CONTROL_AE_COMPENSATION_STEP,
                 )?.toFloat() ?: DEFAULT_EV_STEP,
+                maxJpegPixels = camera2.getCameraCharacteristic(
+                    CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP,
+                )?.getOutputSizes(ImageFormat.JPEG)
+                    ?.maxOfOrNull { it.width.toLong() * it.height.toLong() } ?: 0L,
             )
             specs += LensSpec(
                 cameraId = camera2.cameraId,
@@ -997,11 +1238,57 @@ class CameraSession(
         return LensPlan.build(specs)
     }
 
+    private fun videoFrameRateOptions(
+        provider: ProcessCameraProvider,
+        cameraId: String?,
+    ): List<VideoFrameRate> {
+        val info = provider.availableCameraInfos.firstOrNull { candidate ->
+            Camera2CameraInfo.from(candidate).cameraId == cameraId
+        } ?: return listOf(VideoFrameRate.FPS_30)
+        val ranges = info.supportedFrameRateRanges
+        return listOf(VideoFrameRate.FPS_30, VideoFrameRate.FPS_60)
+            .filter { option -> ranges.any { option.fps in it.lower..it.upper } }
+            .ifEmpty { listOf(VideoFrameRate.FPS_30) }
+    }
+
     /** Manual values ride on the still capture requests through interop (M5). */
     private fun applyManualControls(builder: ImageCapture.Builder) {
         val controls = manualControls
-        if (controls.isAuto()) return
+        if (controls.isAuto() && !macroEnabled) return
         val extender = Camera2Interop.Extender(builder)
+        if (macroEnabled && controls.focusDiopters == null) {
+            extender.setCaptureRequestOption(
+                CaptureRequest.CONTROL_AF_MODE,
+                android.hardware.camera2.CameraMetadata.CONTROL_AF_MODE_MACRO,
+            )
+        }
+        controls.colorTemperatureKelvin?.let { kelvin ->
+            val gains = WhiteBalancePlan.gainsForKelvin(kelvin)
+            extender.setCaptureRequestOption(
+                CaptureRequest.CONTROL_AWB_MODE,
+                android.hardware.camera2.CameraMetadata.CONTROL_AWB_MODE_OFF,
+            )
+            extender.setCaptureRequestOption(
+                CaptureRequest.COLOR_CORRECTION_MODE,
+                CaptureRequest.COLOR_CORRECTION_MODE_TRANSFORM_MATRIX,
+            )
+            extender.setCaptureRequestOption(
+                CaptureRequest.COLOR_CORRECTION_GAINS,
+                RggbChannelVector(gains.red, gains.green, gains.green, gains.blue),
+            )
+        } ?: run {
+            val awbMode = when (controls.whiteBalance) {
+                WhiteBalancePreset.AUTO -> android.hardware.camera2.CameraMetadata.CONTROL_AWB_MODE_AUTO
+                WhiteBalancePreset.INCANDESCENT -> android.hardware.camera2.CameraMetadata.CONTROL_AWB_MODE_INCANDESCENT
+                WhiteBalancePreset.FLUORESCENT -> android.hardware.camera2.CameraMetadata.CONTROL_AWB_MODE_FLUORESCENT
+                WhiteBalancePreset.DAYLIGHT -> android.hardware.camera2.CameraMetadata.CONTROL_AWB_MODE_DAYLIGHT
+                WhiteBalancePreset.CLOUDY -> android.hardware.camera2.CameraMetadata.CONTROL_AWB_MODE_CLOUDY_DAYLIGHT
+                WhiteBalancePreset.TWILIGHT -> android.hardware.camera2.CameraMetadata.CONTROL_AWB_MODE_TWILIGHT
+                WhiteBalancePreset.SHADE -> android.hardware.camera2.CameraMetadata.CONTROL_AWB_MODE_SHADE
+                WhiteBalancePreset.CUSTOM -> android.hardware.camera2.CameraMetadata.CONTROL_AWB_MODE_OFF
+            }
+            extender.setCaptureRequestOption(CaptureRequest.CONTROL_AWB_MODE, awbMode)
+        }
         controls.iso?.let { extender.setCaptureRequestOption(CaptureRequest.SENSOR_SENSITIVITY, it) }
         controls.exposureTimeNs?.let {
             extender.setCaptureRequestOption(CaptureRequest.SENSOR_EXPOSURE_TIME, it)
@@ -1023,6 +1310,7 @@ class CameraSession(
         val sensitivity = characteristic(CameraCharacteristics.SENSOR_INFO_SENSITIVITY_RANGE)
         val exposure = characteristic(CameraCharacteristics.SENSOR_INFO_EXPOSURE_TIME_RANGE)
         val minimumFocus = characteristic(CameraCharacteristics.LENS_INFO_MINIMUM_FOCUS_DISTANCE)
+        val autofocusModes = characteristic(CameraCharacteristics.CONTROL_AF_AVAILABLE_MODES)
         val videoStabilization = characteristic(
             CameraCharacteristics.CONTROL_AVAILABLE_VIDEO_STABILIZATION_MODES,
         )
@@ -1034,9 +1322,13 @@ class CameraSession(
         val layout = lensLayout
         val liveZoom = boundCamera?.cameraInfo?.zoomState?.value
         val evRange = boundCamera?.cameraInfo?.exposureState?.exposureCompensationRange
+        val videoRanges = boundCamera?.cameraInfo?.supportedFrameRateRanges.orEmpty()
+        val supportedVideoFps = listOf(VideoFrameRate.FPS_30, VideoFrameRate.FPS_60)
+            .filter { option -> videoRanges.any { option.fps in it.lower..it.upper } }
+            .ifEmpty { listOf(VideoFrameRate.FPS_30) }
+        val maxJpegPixels = flags?.maxJpegPixels ?: 0L
 
-        onCapabilities(
-            SessionCapabilities(
+        val published = SessionCapabilities(
                 zoomStops = layout?.stops ?: listOf(1f),
                 minDisplayedZoom = layout?.minDisplayedZoom
                     ?: liveZoom?.minZoomRatio
@@ -1065,16 +1357,42 @@ class CameraSession(
                 minFocusDistance = minimumFocus?.takeIf { it > 0f },
                 evRange = evRange?.let { IntRange(it.lower, it.upper) },
                 evStep = flags?.evStep ?: DEFAULT_EV_STEP,
-            ),
-        )
+                supportedVideoFrameRates = supportedVideoFps,
+                maximumPhotoResolutionSupported = maxJpegPixels > STANDARD_PHOTO_PIXEL_THRESHOLD,
+                portraitExtensionAvailable = runCatching {
+                    extensionsManager?.isExtensionAvailable(
+                        selectorForCamera(layout?.referenceCameraId ?: boundId),
+                        ExtensionMode.BOKEH,
+                    ) == true
+                }.getOrDefault(false),
+                nightExtensionAvailable = runCatching {
+                    extensionsManager?.isExtensionAvailable(
+                        selectorForCamera(layout?.referenceCameraId ?: boundId),
+                        ExtensionMode.NIGHT,
+                    ) == true
+                }.getOrDefault(false),
+                hdrExtensionAvailable = runCatching {
+                    extensionsManager?.isExtensionAvailable(
+                        selectorForCamera(layout?.referenceCameraId ?: boundId),
+                        ExtensionMode.HDR,
+                    ) == true
+                }.getOrDefault(false),
+                extensionActive = activeExtensionMode != ExtensionMode.NONE,
+                macroFocusSupported = autofocusModes?.contains(
+                    android.hardware.camera2.CameraMetadata.CONTROL_AF_MODE_MACRO,
+                ) == true,
+            )
+        onCapabilitiesState = published
+        onCapabilities(published)
     }
 
     private fun desiredCaptureMode(): Int =
         if (CaptureProfile.usesZeroShutterLag(
-                zslSupported = zeroShutterLagSupported,
-                flashEnabled = flashEnabled,
+                zslSupported = zeroShutterLagSupported && requestedExtensionMode == ExtensionMode.NONE,
+                flashEnabled = flashChoice != FlashChoice.OFF,
                 rawEnabled = rawEnabled,
                 manualControlsActive = !manualControls.isAuto(),
+                highResolutionActive = photoResolution == PhotoResolution.MAXIMUM,
             )
         ) {
             ImageCapture.CAPTURE_MODE_ZERO_SHUTTER_LAG
@@ -1082,10 +1400,39 @@ class CameraSession(
             ImageCapture.CAPTURE_MODE_MINIMIZE_LATENCY
         }
 
-    private fun flashMode(): Int = if (flashEnabled) {
-        ImageCapture.FLASH_MODE_ON
-    } else {
-        ImageCapture.FLASH_MODE_OFF
+    private fun flashMode(): Int = when (flashChoice) {
+        FlashChoice.OFF -> ImageCapture.FLASH_MODE_OFF
+        FlashChoice.AUTO -> ImageCapture.FLASH_MODE_AUTO
+        FlashChoice.ON -> ImageCapture.FLASH_MODE_ON
+    }
+
+    private fun shouldMirrorCapture(): Boolean =
+        mirrorCaptureEnabled && lensFacing == CameraSelector.LENS_FACING_FRONT
+
+    private fun captureMetadata(): ImageCapture.Metadata = ImageCapture.Metadata().apply {
+        setReversedHorizontal(shouldMirrorCapture())
+        captureLocation?.let { setLocation(it) }
+    }
+
+    private fun playShutterSound() {
+        if (!shutterSoundEnabled) return
+        runCatching {
+            (shutterSound ?: MediaActionSound().also { sound ->
+                sound.load(MediaActionSound.SHUTTER_CLICK)
+                shutterSound = sound
+            }).play(MediaActionSound.SHUTTER_CLICK)
+        }
+    }
+
+    private fun writeLocationExif(uri: Uri) {
+        val location = captureLocation ?: return
+        runCatching {
+            context.contentResolver.openFileDescriptor(uri, "rw")?.use { descriptor ->
+                val exif = ExifInterface(descriptor.fileDescriptor)
+                exif.setLatLong(location.latitude, location.longitude)
+                exif.saveAttributes()
+            }
+        }
     }
 
     private fun Throwable.asException(): Exception = this as? Exception ?: Exception(this)
@@ -1096,6 +1443,7 @@ private data class CameraFlags(
     val zeroShutterLag: Boolean,
     val raw: Boolean,
     val evStep: Float,
+    val maxJpegPixels: Long,
 )
 
 /** Video finalize carried an error; the partial entry is deleted first. */

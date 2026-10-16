@@ -11,8 +11,58 @@ data class ManualControls(
     val iso: Int? = null,
     val exposureTimeNs: Long? = null,
     val focusDiopters: Float? = null,
+    val whiteBalance: WhiteBalancePreset = WhiteBalancePreset.AUTO,
+    val colorTemperatureKelvin: Int? = null,
 ) {
-    fun isAuto(): Boolean = iso == null && exposureTimeNs == null && focusDiopters == null
+    fun isAuto(): Boolean = iso == null && exposureTimeNs == null && focusDiopters == null &&
+        whiteBalance == WhiteBalancePreset.AUTO && colorTemperatureKelvin == null
+}
+
+/** Camera2 AWB presets exposed by the original Expert mode. */
+enum class WhiteBalancePreset(val label: String) {
+    AUTO("AUTO"),
+    INCANDESCENT("TUNGSTEN"),
+    FLUORESCENT("FLUORESCENT"),
+    DAYLIGHT("DAYLIGHT"),
+    CLOUDY("CLOUDY"),
+    TWILIGHT("TWILIGHT"),
+    SHADE("SHADE"),
+    CUSTOM("KELVIN"),
+}
+
+data class WhiteBalanceGains(val red: Float, val green: Float, val blue: Float)
+
+/**
+ * Approximate daylight-locus RGB gains for Camera2's manual colour correction.
+ * This is a standards-based clean-room approximation, not the OEM's sensor
+ * calibration. Gain range is bounded to values commonly accepted by Camera2.
+ */
+object WhiteBalancePlan {
+    fun gainsForKelvin(kelvin: Int): WhiteBalanceGains {
+        val temperature = kelvin.coerceIn(2_000, 10_000) / 100.0
+        val red: Double
+        val green: Double
+        val blue: Double
+        if (temperature <= 66.0) {
+            red = 255.0
+            green = 99.4708025861 * kotlin.math.ln(temperature) - 161.1195681661
+            blue = if (temperature <= 19.0) 0.0 else {
+                138.5177312231 * kotlin.math.ln(temperature - 10.0) - 305.0447927307
+            }
+        } else {
+            red = 329.698727446 * (temperature - 60.0).pow(-0.1332047592)
+            green = 288.1221695283 * (temperature - 60.0).pow(-0.0755148492)
+            blue = 255.0
+        }
+        val r = red.coerceIn(1.0, 255.0)
+        val g = green.coerceIn(1.0, 255.0)
+        val b = blue.coerceIn(1.0, 255.0)
+        return WhiteBalanceGains(
+            red = (g / r).toFloat().coerceIn(0.25f, 8f),
+            green = 1f,
+            blue = (g / b).toFloat().coerceIn(0.25f, 8f),
+        )
+    }
 }
 
 /**

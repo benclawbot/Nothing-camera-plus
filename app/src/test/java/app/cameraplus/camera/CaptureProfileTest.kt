@@ -48,4 +48,15 @@ class CaptureProfileTest {
             )
         )
     }
+
+    @Test
+    fun fallsBackForMaximumResolutionCapture() {
+        assertFalse(
+            CaptureProfile.usesZeroShutterLag(
+                zslSupported = true,
+                flashEnabled = false,
+                highResolutionActive = true,
+            ),
+        )
+    }
 }

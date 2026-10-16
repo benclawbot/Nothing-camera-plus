@@ -22,8 +22,8 @@ Status legend:
 | Slow motion (device-supported high-speed rates) | 🟡 | Camera2 constrained high-speed + MediaRecorder path; hardware unverified |
 | Time lapse (X15…X960) | 🟡 | Camera2 + MediaRecorder interval path; hardware unverified |
 | Panorama (+ direction switch, super/standard) | 🟡 | UI + translation-only software stitch; no rotation correction, downsampled |
-| Macro / Detail close-up | ⬜ | planned |
-| Expert / Manual | 🟡 | ISO/shutter/MF/EV present; WB, histogram, level meter missing |
+| Macro / Detail close-up | 🟡 | Camera2 macro AF mode when the lens reports it; 4cm/tele macro unverified |
+| Expert / Manual | 🟡 | ISO/shutter/MF/EV and WB presets/custom Kelvin; histogram/Pro meter missing |
 | Beauty / retouching | 🚫 | needs their face pipeline |
 | Beauty video | 🚫 | same |
 | PanoNight | ⬜ | stretch |
@@ -32,19 +32,21 @@ Status legend:
 
 | Feature | Camera+ | Note |
 |---|---|---|
-| Aspect ratio picker (1:1, 4:3, 16:9, 20.5:9 …) | ⬜ | easy, CameraX crop selectors |
-| HDR toggle (off/auto/on/force) | 🟡 | software tone curve only |
+| Aspect ratio picker (1:1, 4:3, 16:9, 20.5:9 …) | ✅ | CameraX crop ratios |
+| HDR toggle (off/auto/on/force) | 🟡 | single-frame software HDR + capability-gated CameraX HDR extension; no Force/auto scene detection |
 | Ultra HDR | 🚫 | vendor format |
-| Quality 12MP / 50MP | ⬜ | 50MP needs remosaic (vendor) — 12MP achievable |
+| Quality 12MP / max JPEG | 🟡 | selects CameraX highest advertised output; does not promise 50MP remosaic |
 | Motion photo (live) | 🚫 | vendor capture pipeline |
 | RAW / Pro RAW | 🟡 | fixed wrong CameraX overload; hardware capture still unverified |
-| Flash off/on/torch/auto/screen | 🟡 | off/on/torch; no auto, no screen flash |
+| Flash off/on/torch/auto/screen | 🟡 | off/on/auto and video torch implemented; screen/Glyph/LED variants absent |
 | Self-timer 3s / 10s | ✅ | |
 | Grid / mesh | ✅ | |
 | Leveler | ✅ | |
-| Burst / long-press shutter | ✅ | 4 queued captures |
-| Google Lens, stickers, face detect | 🚫 | out of scope |
-| QR scan | ⬜ | easy-ish, ML Kit or ZXing |
+| Burst / continuous capture | 🟡 | up to four queued captures; no long-press repeat gesture |
+| Google Lens | 🚫 | requires the external Google app/service |
+| Stickers | ⬜ | no clean-room sticker pack/editor |
+| Face detection overlay | ⬜ | no face detector integrated |
+| QR scan | ✅ | local ZXing QR-only analyzer, no network scan service |
 
 ## Zoom / lens
 
@@ -59,22 +61,22 @@ Status legend:
 
 | Feature | Camera+ | Note |
 |---|---|---|
-| Video quality picker | 🟡 | HD/1080p/4K quality tiers; no 30/60 fps selector yet |
+| Video quality picker | 🟡 | HD/1080p/4K plus requested 30/60fps; camera/encoder combination remains device-dependent |
 | EIS standard/super/off | 🟡 | on/off only |
 | Action mode 60fps | ⬜ | |
 | Night video | ⬜ | |
 | H.264 / H.265 encoder picker | 🟡 | CameraX picks; no UI |
 | Audio mute | ✅ | |
-| Record location | ⬜ | needs location permission |
-| Mirror capture | ⬜ | |
-| Video snapshot | ⬜ | |
+| Record location | 🟡 | explicit runtime opt-in, last/current fix stored in MediaStore/EXIF; hardware/provider behavior unverified |
+| Mirror capture | 🟡 | front-camera still/video mirror is wired; output behavior unverified |
+| Video snapshot | 🟡 | concurrent still ImageCapture is bound during Video; device support unverified |
 | Beauty video | 🚫 | |
 
 ## Portrait
 
 | Feature | Camera+ | Note |
 |---|---|---|
-| Bokeh level | ⬜ | needs depth |
+| Bokeh level | 🟡 | CameraX OEM BOKEH extension when available; otherwise software ellipse, not depth segmentation |
 | Effect presets (Velvet/Twist/Pentacle/Snowflake) | ⬜ | software bokeh can do light shapes |
 | Retouching / beauty levels | 🚫 | vendor face pipeline |
 | Portrait zoom 1–4x | ⬜ | |
@@ -84,8 +86,8 @@ Status legend:
 
 | Feature | Camera+ | Note |
 |---|---|---|
-| Night capture | ⬜ | multi-frame merge planned |
-| Auto night detection | 🟡 | software scene guess only |
+| Night capture | 🟡 | CameraX OEM NIGHT extension when available; otherwise 4-frame software merge |
+| Auto night detection | ⬜ | no scene classifier; user selects Night manually |
 | Super night / turbo | 🚫 | vendor pipeline |
 
 ## Slow motion
@@ -115,28 +117,28 @@ Status legend:
 
 | Feature | Camera+ | Note |
 |---|---|---|
-| Super macro (4cm) | ⬜ | depends on hardware close-focus distance |
+| Super macro (4cm) | 🟡 | Camera2 macro AF mode where advertised; no distance guarantee |
 | Tele macro / detail | ⬜ | |
 
 ## Settings / global
 
 | Feature | Camera+ | Note |
 |---|---|---|
-| Processing sheet (tone/skin/sharp/…) | ✅ | |
-| In-app gallery (recent Camera+ media, photo viewer, share) | ✅ | video opens in system player |
+| Processing sheet (tone/skin/sharp/…) | ✅ | Includes clean-room Natural/B&W/Warm/Cool/Vivid/Vintage looks |
+| In-app gallery (recent Camera+ media, photo viewer, share) | 🟡 | Camera+ items: view/share/favorite/delete/info; video opens in system player |
 | Tap-to-focus/meter | 🟡 | CameraX metering action; hardware behavior unverified |
 | Viewfinder exposure-compensation control | 🟡 | EV slider wired to CameraX; hardware behavior unverified |
 | Long-press focus/meter lock | 🟡 | long-duration metering action; hardware behavior unverified |
 | Pinch-to-zoom / zoom readout | 🟡 | implemented, hardware behavior unverified |
-| Aspect ratio picker | ⬜ | |
-| Shutter sound | ⬜ | |
-| Save position | ⬜ | |
+| Aspect ratio picker | ✅ | |
+| Shutter sound | ✅ | explicit on/off; platform may enforce regional behavior |
+| Save position | 🟡 | fixed Camera+ MediaStore folders, no user-selectable path |
 | Modes editor / reordering | ⬜ | cosmetic |
-| Watermark (logo/time/date/location/params) | ⬜ | doable in software |
+| Watermark (brand/date/time/location/author) | 🟡 | software stamp options; camera-parameter watermark and original styles absent |
 | AI scene detection | 🚫 | vendor ML |
 | Colour mode natural/vivid | 🟡 | processing sheet covers |
-| Presets / user LUT import | ⬜ | |
-| Filters (Morpho/Tetras + user LUT) | 🚫 | vendor renderers + assets |
+| Presets / user LUT import | ⬜ | no LUT import/export |
+| Filters (Morpho/Tetras + user LUT) | 🚫 | original vendor renderers/assets unavailable; clean-room filters are separate |
 
 ---
 
@@ -166,8 +168,8 @@ unit-tested math component does not count as hardware feature parity.
 
 | Original item | Status | Evidence / Camera+ note |
 |---|---|---|
-| Mode carousel with configurable/reorderable mode list | ⬜ | `CameraModePreference`, `mode_edit_drag_hint` |
-| Photo / Video / Portrait / Manual / Panorama / Night / Time lapse / Slow motion / Macro mode entries | 🟡 | entries now include photo, video, portrait, panorama, night, slow-mo, time lapse, expert |
+| Mode carousel with configurable/reorderable mode list | 🟡 | clean-room modes are listed; reorder editor absent |
+| Photo / Video / Portrait / Manual / Panorama / Night / Time lapse / Slow motion / Macro / QR entries | 🟡 | public-API modes are available; Beauty and PanoNight are absent |
 | Beauty photo and Beauty video modes | 🚫 | `ProductConfig.isSupportBeauty*`; proprietary face pipeline |
 | Bokeh mode distinct from Portrait | 🟡 | clean-room simulated portrait blur only |
 | Panorama-night / PanoHDR mode | ⬜ | `ModeIndex.PANORAMA_NIGHT_ID`, proprietary HDR path |
@@ -178,15 +180,15 @@ unit-tested math component does not count as hardware feature parity.
 
 | Original item | Status | Evidence / Camera+ note |
 |---|---|---|
-| Aspect ratios 1:1, 4:3, 16:9, 20.5:9, 20:9, 19.5:9, 19:9, 18:9 | ⬜ | `pref_camera_aspect_ratio_entryvalues` |
-| HDR Off / On / Force and auto-detection | 🟡 | current HDR is a software tone curve, not multi-frame/vendor HDR |
+| Aspect ratios 1:1, 4:3, 16:9, 20.5:9, 20:9, 19.5:9, 19:9, 18:9 | ✅ | `pref_camera_aspect_ratio_entryvalues` |
+| HDR Off / On / Force and auto-detection | 🟡 | software curve + hardware extension when available; no Force/scene detection |
 | Ultra HDR / Ultra XDR output | 🚫 | `UltraHDRFragment`; original format pipeline not reproduced |
-| Photo size 12MP / 50MP | ⬜ | `pref_camera_toggle_entries`; hardware remosaic path absent |
+| Photo size 12MP / 50MP | 🟡 | Standard/MAX JPEG; max output is hardware-reported and not guaranteed to be 50MP |
 | Remosaic 50MP capture | 🚫 | `RemosaicMode`, `NT_REMOSAIC_CAPTURE_KEY` |
 | Super-resolution capture / zoom | ⬜ | `SRModeHelper`, `RawSuperResolutionHelper` |
 | Motion photo / live photo on/off | 🚫 | `MotionManager`, `TemplateMtkMotionMode` |
 | RAW + companion JPEG / DNG | 🟡 | correct CameraX overload implemented; actual device capability/output unverified |
-| Flash Off / On / Auto | 🟡 | Off/On are implemented; Auto selection is absent |
+| Flash Off / On / Auto | ✅ | CameraX OFF/AUTO/ON; hardware behavior unverified |
 | Steady torch | ✅ | torch available in Video mode |
 | Screen flash / Glyph flash / LED variants | ⬜ | `ScreenFlashManager`, glyph flash strings |
 | Self timer Off / 3s / 10s | ✅ | |
@@ -202,7 +204,7 @@ unit-tested math component does not count as hardware feature parity.
 
 | Original item | Status | Evidence / Camera+ note |
 |---|---|---|
-| 1080p30 / 1080p60 / 4K30 / 4K60 choices | 🟡 | HD/1080p/4K tiers exist; explicit fps selector is missing |
+| 1080p30 / 1080p60 / 4K30 / 4K60 choices | 🟡 | quality and 30/60fps requested separately; valid combinations vary by camera/encoder |
 | Video HDR / SHDR toggles | ⬜ | `pref_video_hdr_plus_key`, `pref_video_shdr_key` |
 | Action Mode 60fps | ⬜ | `pref_camera_video_action_mode` |
 | Standard / Super EIS / Off | 🟡 | capability-detected standard/preview stabilization toggle; no Super EIS mode |
@@ -213,10 +215,10 @@ unit-tested math component does not count as hardware feature parity.
 | H.264 / H.265 selector | ⬜ | CameraX/MediaRecorder selects codec; no user selector |
 | Video microphone mute | ✅ | microphone toggle in standard Video mode |
 | OIS preference | 🟡 | hardware stabilization capability is exposed; no independent OIS setting |
-| Record-location / geotag toggle | ⬜ | `pref_camera_recordlocation_key`; no location permission/metadata |
-| Mirror capture | ⬜ | `pref_capture_mirror_key` |
+| Record-location / geotag toggle | 🟡 | permission-gated current/last fix written where provider supports it |
+| Mirror capture | 🟡 | front-camera still/video mirroring is wired; device behavior unverified |
 | Zoom/lens switching while recording | 🟡 | UI zoom planning exists; hardware transition behavior unverified |
-| Video snapshot while recording | ⬜ | no snapshot action |
+| Video snapshot while recording | 🟡 | UI action plus concurrent CameraX still use case; device support unverified |
 | Slow motion 1080p120/240/480 and 4K120 | 🟡 | dynamically enumerates high-speed rates up to 1080p; 4K120 is not offered |
 | Slow-motion supported-rate picker | 🟡 | device-reported rate picker; needs hardware validation |
 | Slow-motion zoom cap and mute/snapshot rules | ⬜ | no mode-specific zoom cap or snapshot action |
@@ -245,7 +247,7 @@ unit-tested math component does not count as hardware feature parity.
 | Standard / Super panorama | ⬜ | no OEM quality mode |
 | Panorama capture line/speed/alignment warnings | ⬜ | basic frame count only; no live motion guidance |
 | Panorama-night / ArcSoft/morpho engine | 🚫 | original third-party/vendor pipeline not reproduced |
-| Super Macro / ~4cm close focus | ⬜ | no dedicated close-focus mode |
+| Super Macro / ~4cm close focus | 🟡 | Camera2 macro AF mode where advertised; no 4cm distance guarantee |
 | Tele-macro / Detail close-up | ⬜ | `ProductConfig.isSupportTeleMacro` |
 | Auto macro switching in photo/video | ⬜ | no lens-distance auto-switch logic |
 | Macro zoom 1x/2x/4x, exposure and session config | ⬜ | original `STREAM_CONFIG_MODE_MACRO` path absent |
@@ -258,7 +260,7 @@ unit-tested math component does not count as hardware feature parity.
 | ISO Auto and manual ISO 50–6400 | 🟡 | device-reported ISO range, not original fixed options |
 | Shutter Auto / 1/12000…30s | 🟡 | device-reported exposure range |
 | Manual focus progress control | 🟡 | manual focus slider; device range varies |
-| White-balance presets and custom temperature | ⬜ | original Auto/incandescent/daylight/fluorescent/cloudy/custom absent |
+| White-balance presets and custom temperature | 🟡 | Camera2 AWB presets + approximate Kelvin gains; sensor calibration differs |
 | Global exposure compensation controls | 🟡 | AE-compensation slider is available after tapping the preview |
 | Tap-to-focus and tap-to-meter | 🟡 | CameraX combined AF/AE action; hardware behavior unverified |
 | Long-press AF/AE lock | 🟡 | long-duration metering action; hardware behavior unverified |
@@ -277,14 +279,14 @@ unit-tested math component does not count as hardware feature parity.
 | Morpho/Tetras filter packs and filter-strength picker | 🚫 | vendor renderers/assets intentionally excluded |
 | User LUT import / presets and preset sharing | ⬜ | no LUT import/export yet |
 | Black-and-white filter | ⬜ | no dedicated filter toggle |
-| Watermark on/off and logo/time/date/location/camera-parameter/author options | ⬜ | software watermark pipeline absent |
+| Watermark on/off and logo/time/date/location/author options | 🟡 | software text stamp; camera parameters and original artwork/style absent |
 | Glyph mirror preference | ⬜ | `glyph_mirror` |
-| QR-code scanning | ⬜ | `QrCodeMode`, no scanner dependency |
+| QR-code scanning | ✅ | local ZXing QR analyzer with open/copy actions; not every barcode type |
 | In-app recent gallery and photo viewer | 🟡 | Camera+ MediaStore grid/viewer/share implemented; not a general device gallery |
 | In-app video playback | ⬜ | video opens in a system player instead |
-| Gallery delete/favorite/info/editor/crop/rotate actions | ⬜ | not implemented |
+| Gallery delete/favorite/info actions | 🟡 | delete/favorite/date/size implemented; crop/rotate/editor absent |
 | Motion-photo playback in gallery | 🚫 | motion photo capture absent |
-| Shutter sound toggle | ⬜ | no sound preference |
+| Shutter sound toggle | ✅ | MediaActionSound toggle; hardware/region policy may override |
 | Volume-key / touch / smile shutter | ⬜ | `pref_camera_volume_key`, `pref_shutter_touch_key`, `pref_shutter_smile_key` |
 | Save-position / default-gallery selection | ⬜ | app currently writes to Camera+ MediaStore folders |
 | Anti-flicker, exposure-metering, dehaze/distortion controls | ⬜ | advanced vendor settings not implemented |

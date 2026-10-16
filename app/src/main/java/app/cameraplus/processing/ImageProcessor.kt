@@ -1,6 +1,7 @@
 package app.cameraplus.processing
 
 import app.cameraplus.settings.ProcessingSettings
+import app.cameraplus.settings.PhotoFilter
 import kotlin.math.abs
 import kotlin.math.pow
 import kotlin.math.roundToInt
@@ -28,6 +29,10 @@ object ImageProcessor {
         require(width > 0 && height > 0) { "image must not be empty" }
         require(pixels.size >= width * height) { "pixel buffer too small" }
 
+        if (settings.filter != PhotoFilter.NATURAL) {
+            applyFilter(pixels, width, height, settings.filter)
+        }
+
         if (settings.hdr > 0f) {
             toneCurve(pixels, width, height, settings.hdr)
         }
@@ -49,6 +54,54 @@ object ImageProcessor {
         }
         if (settings.sharpening > 0f) {
             sharpen(pixels, width, height, settings.sharpening)
+        }
+    }
+
+    private fun applyFilter(pixels: IntArray, width: Int, height: Int, filter: PhotoFilter) {
+        for (i in 0 until width * height) {
+            val pixel = pixels[i]
+            val r = (pixel ushr 16) and 0xFF
+            val g = (pixel ushr 8) and 0xFF
+            val b = pixel and 0xFF
+            val luma = 0.299f * r + 0.587f * g + 0.114f * b
+            val (nr, ng, nb) = when (filter) {
+                PhotoFilter.NATURAL -> Triple(r.toFloat(), g.toFloat(), b.toFloat())
+                PhotoFilter.MONOCHROME -> Triple(luma, luma, luma)
+                PhotoFilter.WARM -> Triple(r * 1.08f, g * 1.01f, b * 0.90f)
+                PhotoFilter.COOL -> Triple(r * 0.91f, g * 1.00f, b * 1.09f)
+                PhotoFilter.VIVID -> Triple(
+                    luma + (r - luma) * 1.28f,
+                    luma + (g - luma) * 1.28f,
+                    luma + (b - luma) * 1.28f,
+                )
+                PhotoFilter.VINTAGE -> Triple(
+                    0.393f * r + 0.769f * g + 0.189f * b,
+                    0.349f * r + 0.686f * g + 0.168f * b,
+                    0.272f * r + 0.534f * g + 0.131f * b,
+                )
+            }
+            pixels[i] = pack(
+                nr.roundToInt().coerceIn(0, 255),
+                ng.roundToInt().coerceIn(0, 255),
+                nb.roundToInt().coerceIn(0, 255),
+                alphaOf(pixel),
+            )
+        }
+    }
+
+    /** Mirrors each row in-place, used for the explicit selfie-mirror option. */
+    fun mirrorHorizontally(pixels: IntArray, width: Int, height: Int) {
+        require(width > 0 && height > 0) { "image must not be empty" }
+        require(pixels.size >= width * height) { "pixel buffer too small" }
+        for (y in 0 until height) {
+            val row = y * width
+            for (x in 0 until width / 2) {
+                val opposite = row + width - 1 - x
+                val current = row + x
+                val pixel = pixels[current]
+                pixels[current] = pixels[opposite]
+                pixels[opposite] = pixel
+            }
         }
     }
 

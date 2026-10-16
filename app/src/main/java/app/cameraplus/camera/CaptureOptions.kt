@@ -16,6 +16,49 @@ enum class SelfTimer(val label: String, val seconds: Int) {
     val enabled: Boolean get() = seconds > 0
 }
 
+/** CameraX's still-capture flash policies exposed by the stock camera. */
+enum class FlashChoice(val label: String) {
+    OFF("OFF"),
+    AUTO("AUTO"),
+    ON("ON");
+
+    fun next(): FlashChoice = entries[(ordinal + 1) % entries.size]
+}
+
+/** Crop ratios offered by the original camera, including tall-screen crops. */
+enum class PhotoAspectRatio(
+    val label: String,
+    val numerator: Int,
+    val denominator: Int,
+) {
+    SQUARE("1:1", 1, 1),
+    FOUR_THREE("4:3", 4, 3),
+    SIXTEEN_NINE("16:9", 16, 9),
+    TWENTY_POINT_FIVE_NINE("20.5:9", 41, 18),
+    TWENTY_NINE("20:9", 20, 9),
+    NINETEEN_POINT_FIVE_NINE("19.5:9", 39, 18),
+    NINETEEN_NINE("19:9", 19, 9),
+    EIGHTEEN_NINE("18:9", 18, 9),
+}
+
+/** Standard CameraX selection vs the largest JPEG size the camera advertises. */
+enum class PhotoResolution(val label: String) {
+    STANDARD("12MP"),
+    MAXIMUM("MAX");
+}
+
+/** User-facing video frame-rate requests; actual support comes from CameraInfo. */
+enum class VideoFrameRate(val fps: Int, val label: String) {
+    FPS_30(30, "30FPS"),
+    FPS_60(60, "60FPS");
+
+    fun next(supported: List<VideoFrameRate>): VideoFrameRate {
+        val available = supported.ifEmpty { listOf(FPS_30) }
+        val currentIndex = available.indexOf(this)
+        return available[(currentIndex + 1).mod(available.size)]
+    }
+}
+
 /**
  * Video quality policy (v1.1).
  *

@@ -1,6 +1,7 @@
 package app.cameraplus.processing
 
 import app.cameraplus.settings.ProcessingSettings
+import app.cameraplus.settings.PhotoFilter
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertTrue
@@ -17,6 +18,32 @@ class ImageProcessorTest {
         val original = pixels.copyOf()
         ImageProcessor.apply(pixels, 2, 1, ProcessingSettings.NATURAL)
         assertTrue(original.contentEquals(pixels))
+    }
+
+    @Test
+    fun horizontalMirrorReversesEachRowWithoutReorderingRows() {
+        val pixels = intArrayOf(1, 2, 3, 4, 5, 6)
+        ImageProcessor.mirrorHorizontally(pixels, width = 3, height = 2)
+        assertTrue(intArrayOf(3, 2, 1, 6, 5, 4).contentEquals(pixels))
+    }
+
+    @Test
+    fun cleanRoomFiltersApplyDistinctColorLooks() {
+        val source = intArrayOf(rgb(200, 80, 30))
+        val monochrome = source.copyOf()
+        ImageProcessor.apply(monochrome, 1, 1, ProcessingSettings(filter = PhotoFilter.MONOCHROME))
+        val r = red(monochrome[0])
+        assertEquals(r, (monochrome[0] ushr 8) and 0xFF)
+        assertEquals(r, monochrome[0] and 0xFF)
+
+        val warm = source.copyOf()
+        ImageProcessor.apply(warm, 1, 1, ProcessingSettings(filter = PhotoFilter.WARM))
+        assertTrue(red(warm[0]) > red(source[0]))
+        assertTrue((warm[0] and 0xFF) < (source[0] and 0xFF))
+
+        val cool = source.copyOf()
+        ImageProcessor.apply(cool, 1, 1, ProcessingSettings(filter = PhotoFilter.COOL))
+        assertTrue((cool[0] and 0xFF) > (source[0] and 0xFF))
     }
 
     @Test

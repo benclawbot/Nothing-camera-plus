@@ -22,17 +22,23 @@ import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.ArrowBack
+import androidx.compose.material.icons.outlined.Delete
+import androidx.compose.material.icons.outlined.Favorite
+import androidx.compose.material.icons.outlined.FavoriteBorder
 import androidx.compose.material.icons.outlined.PlayCircle
 import androidx.compose.material.icons.outlined.Share
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -46,6 +52,7 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import kotlinx.coroutines.launch
 import app.cameraplus.media.MediaLibrary
 import app.cameraplus.ui.theme.Black
 import app.cameraplus.ui.theme.DimWhite
@@ -64,6 +71,7 @@ fun GalleryScreen(
     modifier: Modifier = Modifier,
 ) {
     val context = LocalContext.current
+    val scope = rememberCoroutineScope()
     var items by remember { mutableStateOf<List<MediaLibrary.Item>?>(null) }
     var opened by remember { mutableStateOf<MediaLibrary.Item?>(null) }
 
@@ -72,7 +80,26 @@ fun GalleryScreen(
     Box(modifier = modifier.fillMaxSize().background(Black)) {
         val current = opened
         if (current != null) {
-            Viewer(item = current, onBack = { opened = null })
+            Viewer(
+                item = current,
+                onBack = { opened = null },
+                onFavorite = { favorite ->
+                    scope.launch {
+                        if (MediaLibrary.setFavorite(context, current, favorite)) {
+                            opened = current.copy(isFavorite = favorite)
+                            items = items?.map { if (it.uri == current.uri) it.copy(isFavorite = favorite) else it }
+                        }
+                    }
+                },
+                onDelete = {
+                    scope.launch {
+                        if (MediaLibrary.delete(context, current)) {
+                            items = items?.filterNot { it.uri == current.uri }
+                            opened = null
+                        }
+                    }
+                },
+            )
         } else {
             Column(modifier = Modifier.fillMaxSize()) {
                 GalleryHeader(onDismiss = onDismiss)
@@ -178,10 +205,13 @@ private fun GalleryCell(
 private fun Viewer(
     item: MediaLibrary.Item,
     onBack: () -> Unit,
+    onFavorite: (Boolean) -> Unit,
+    onDelete: () -> Unit,
 ) {
     val context = LocalContext.current
     val density = LocalDensity.current
     var bitmap by remember(item.uri) { mutableStateOf<Bitmap?>(null) }
+    var confirmDelete by remember(item.uri) { mutableStateOf(false) }
 
     LaunchedEffect(item.uri) {
         val maxPx = with(density) { 1080.dp.toPx().toInt() }
@@ -222,6 +252,24 @@ private fun Viewer(
                     .size(28.dp)
                     .clickable { share(context, item) },
             )
+            Icon(
+                imageVector = if (item.isFavorite) Icons.Outlined.Favorite else Icons.Outlined.FavoriteBorder,
+                contentDescription = if (item.isFavorite) "Remove favorite" else "Favorite",
+                tint = White,
+                modifier = Modifier
+                    .padding(start = 12.dp)
+                    .size(25.dp)
+                    .clickable { onFavorite(!item.isFavorite) },
+            )
+            Icon(
+                imageVector = Icons.Outlined.Delete,
+                contentDescription = "Delete",
+                tint = White,
+                modifier = Modifier
+                    .padding(start = 12.dp)
+                    .size(25.dp)
+                    .clickable { confirmDelete = true },
+            )
         }
         Box(
             modifier = Modifier.fillMaxSize(),
@@ -250,8 +298,36 @@ private fun Viewer(
                     fontFamily = FontFamily.Monospace,
                 )
             }
+            Text(
+                text = "${java.text.DateFormat.getDateTimeInstance().format(java.util.Date(item.dateMillis))} · ${formatBytes(item.sizeBytes)}",
+                color = FaintWhite,
+                fontFamily = FontFamily.Monospace,
+                fontSize = 10.sp,
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .padding(bottom = 12.dp),
+            )
         }
     }
+    if (confirmDelete) {
+        AlertDialog(
+            onDismissRequest = { confirmDelete = false },
+            title = { Text("Delete this item?") },
+            text = { Text(item.displayName) },
+            confirmButton = {
+                TextButton(onClick = { confirmDelete = false; onDelete() }) { Text("DELETE") }
+            },
+            dismissButton = {
+                TextButton(onClick = { confirmDelete = false }) { Text("CANCEL") }
+            },
+        )
+    }
+}
+
+private fun formatBytes(bytes: Long): String = when {
+    bytes >= 1024L * 1024L -> String.format(java.util.Locale.US, "%.1f MB", bytes / (1024f * 1024f))
+    bytes >= 1024L -> String.format(java.util.Locale.US, "%.0f KB", bytes / 1024f)
+    else -> "$bytes B"
 }
 
 private fun share(context: android.content.Context, item: MediaLibrary.Item) {

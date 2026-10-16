@@ -2,10 +2,17 @@ package app.cameraplus.ui
 
 import android.Manifest
 import android.content.pm.PackageManager
+import android.content.ClipData
+import android.content.ClipboardManager
+import android.content.Intent
+import android.location.Location
+import android.location.LocationManager
 import android.view.TextureView
+import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.camera.view.PreviewView
+import androidx.camera.extensions.ExtensionMode
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -30,6 +37,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Cameraswitch
+import androidx.compose.material.icons.outlined.FlashAuto
 import androidx.compose.material.icons.outlined.FlashOff
 import androidx.compose.material.icons.outlined.FlashOn
 import androidx.compose.material.icons.outlined.GridOn
@@ -70,6 +78,11 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.LocalLifecycleOwner
+import app.cameraplus.camera.FlashChoice
+import app.cameraplus.camera.PhotoAspectRatio
+import app.cameraplus.camera.PhotoResolution
+import app.cameraplus.camera.VideoFrameRate
+import app.cameraplus.camera.WhiteBalancePreset
 import app.cameraplus.camera.LensZoomPlan
 import app.cameraplus.camera.ManualControlPlan
 import app.cameraplus.camera.ManualControls
@@ -87,12 +100,18 @@ import app.cameraplus.camera.SessionMode
 import app.cameraplus.camera.StabilizationLevel
 import app.cameraplus.camera.StabilizationProfile
 import app.cameraplus.settings.ProcessingSettingsStore
+import app.cameraplus.settings.CapturePreferences
+import app.cameraplus.settings.CapturePreferencesStore
+import app.cameraplus.settings.WatermarkOptions
+import app.cameraplus.settings.WatermarkOptionsStore
 import app.cameraplus.processing.ImageProcessor
 import app.cameraplus.ui.theme.Black
 import app.cameraplus.ui.theme.DimWhite
 import app.cameraplus.ui.theme.FaintWhite
 import app.cameraplus.ui.theme.White
 import java.util.Locale
+import android.net.Uri
+import java.util.function.Consumer
 import kotlin.math.abs
 import kotlin.math.roundToInt
 import kotlin.coroutines.resume
@@ -109,6 +128,8 @@ enum class CameraMode(val label: String, val session: SessionMode?) {
     PORTRAIT("PORTRAIT", SessionMode.PHOTO),
     NIGHT("NIGHT", SessionMode.PHOTO),
     PANORAMA("PANORAMA", SessionMode.PHOTO),
+    MACRO("MACRO", SessionMode.PHOTO),
+    QR("QR", SessionMode.QR),
     VIDEO("VIDEO", SessionMode.VIDEO),
     SLOW_MOTION("SLO-MO", null),
     TIME_LAPSE("TIME-LAPSE", null),
@@ -116,6 +137,13 @@ enum class CameraMode(val label: String, val session: SessionMode?) {
 
     val usesCamera2Recorder: Boolean
         get() = this == SLOW_MOTION || this == TIME_LAPSE
+}
+
+private fun extensionModeFor(mode: CameraMode, photoHdrEnabled: Boolean): Int = when {
+    mode == CameraMode.PORTRAIT -> ExtensionMode.BOKEH
+    mode == CameraMode.NIGHT -> ExtensionMode.NIGHT
+    mode == CameraMode.PHOTO && photoHdrEnabled -> ExtensionMode.HDR
+    else -> ExtensionMode.NONE
 }
 
 @Composable
@@ -132,13 +160,18 @@ fun CameraScreen() {
     val coroutineScope = rememberCoroutineScope()
 
     val store = remember(context) { ProcessingSettingsStore(context) }
+    val capturePreferencesStore = remember(context) { CapturePreferencesStore(context) }
+    val capturePreferences = remember(capturePreferencesStore) { capturePreferencesStore.load() }
+    val watermarkStore = remember(context) { WatermarkOptionsStore(context) }
     var processing by remember { mutableStateOf(store.load()) }
+    var watermark by remember { mutableStateOf(watermarkStore.load()) }
     var showProcessing by remember { mutableStateOf(false) }
     var showGallery by remember { mutableStateOf(false) }
     var guides by remember { mutableStateOf(CompositionGuides.NONE) }
     val roll = rememberSensorRoll()
     var focusTarget by remember { mutableStateOf<Offset?>(null) }
     var focusLocked by remember { mutableStateOf(false) }
+    var qrResult by remember { mutableStateOf<String?>(null) }
 
     // A metering ring that is not locked goes away on its own, like the
     // stock timer; a locked one stays until the next tap or mode switch.
@@ -150,13 +183,13 @@ fun CameraScreen() {
     }
 
     var mode by remember { mutableStateOf(CameraMode.PHOTO) }
-    var flashEnabled by remember { mutableStateOf(false) }
+    var flashChoice by remember { mutableStateOf(capturePreferences.flashChoice) }
     var torchEnabled by remember { mutableStateOf(false) }
     var inFlight by remember { mutableIntStateOf(0) }
     var shutterPulse by remember { mutableIntStateOf(0) }
     var processingCapture by remember { mutableStateOf(false) }
     var status by remember { mutableStateOf<String?>(null) }
-    var bokehLevel by remember { mutableFloatStateOf(0.45f) }
+    var bokehLevel by remember { mutableFloatStateOf(capturePreferences.portraitBlurLevel) }
     val panoramaCapture = remember { PanoramaCapture() }
     var panoramaProgress by remember { mutableStateOf(panoramaCapture.progress()) }
     var panoramaDirection by remember { mutableStateOf(Direction.RIGHT) }
@@ -170,8 +203,8 @@ fun CameraScreen() {
     var recordStartedAt by remember { mutableStateOf(0L) }
     var recordSeconds by remember { mutableStateOf(0) }
     var slowMotionRates by remember { mutableStateOf<List<Int>>(emptyList()) }
-    var slowMotionFps by remember { mutableIntStateOf(120) }
-    var timeLapseSpeed by remember { mutableIntStateOf(60) }
+    var slowMotionFps by remember { mutableIntStateOf(capturePreferences.slowMotionFps) }
+    var timeLapseSpeed by remember { mutableIntStateOf(capturePreferences.timeLapseSpeed) }
     var micEnabled by remember { mutableStateOf(true) }
     var audioGranted by remember {
         mutableStateOf(
@@ -179,9 +212,17 @@ fun CameraScreen() {
                 PackageManager.PERMISSION_GRANTED,
         )
     }
+    var geotagEnabled by remember { mutableStateOf(false) }
+    var currentLocation by remember { mutableStateOf<Location?>(null) }
     var stabilizationEnabled by remember { mutableStateOf(true) }
-    var videoQuality by remember { mutableStateOf(VideoQuality.FHD) }
-    var selfTimer by remember { mutableStateOf(SelfTimer.OFF) }
+    var videoQuality by remember { mutableStateOf(capturePreferences.videoQuality) }
+    var videoFrameRate by remember { mutableStateOf(capturePreferences.videoFrameRate) }
+    var photoAspectRatio by remember { mutableStateOf(capturePreferences.photoAspectRatio) }
+    var photoResolution by remember { mutableStateOf(capturePreferences.photoResolution) }
+    var photoHdrEnabled by remember { mutableStateOf(capturePreferences.photoHdrEnabled) }
+    var mirrorCapture by remember { mutableStateOf(capturePreferences.mirrorCapture) }
+    var shutterSoundEnabled by remember { mutableStateOf(capturePreferences.shutterSoundEnabled) }
+    var selfTimer by remember { mutableStateOf(capturePreferences.selfTimer) }
     var timerDeadline by remember { mutableStateOf(0L) }
     var timerLeft by remember { mutableIntStateOf(0) }
     var pendingShot by remember { mutableStateOf(false) }
@@ -189,6 +230,8 @@ fun CameraScreen() {
     var isoGauge by remember { mutableStateOf(0f) }
     var speedGauge by remember { mutableStateOf(0f) }
     var focusGauge by remember { mutableStateOf(0f) }
+    var whiteBalance by remember { mutableStateOf(capturePreferences.whiteBalance) }
+    var whiteBalanceKelvin by remember { mutableIntStateOf(capturePreferences.whiteBalanceKelvin) }
 
     val camera2Recorder = remember(context, camera2TextureView) {
         Camera2Recorder(
@@ -226,15 +269,62 @@ fun CameraScreen() {
         }
     }
 
+    fun updateCaptureLocation(location: Location?) {
+        currentLocation = location?.let(::Location)
+        session.setCaptureLocation(currentLocation)
+        camera2Recorder.setLocation(currentLocation)
+        if (location == null && geotagEnabled) {
+            status = "Location enabled · waiting for a location fix"
+        }
+    }
+
+    val locationPermission = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestMultiplePermissions(),
+    ) { results ->
+        val granted = results[Manifest.permission.ACCESS_FINE_LOCATION] == true ||
+            results[Manifest.permission.ACCESS_COARSE_LOCATION] == true
+        geotagEnabled = granted
+        if (granted) {
+            requestCurrentLocation(context) { location ->
+                updateCaptureLocation(location)
+                if (location != null) status = "Geotagging enabled"
+            }
+        } else {
+            updateCaptureLocation(null)
+            status = "Location permission denied"
+        }
+    }
+
     fun bindCameraX() {
+        session.setFlashChoice(flashChoice)
+        session.setPhotoAspectRatio(photoAspectRatio)
+        session.setPhotoResolution(photoResolution)
+        session.setVideoQuality(videoQuality)
+        session.setVideoFrameRate(videoFrameRate)
+        session.setMirrorCaptureEnabled(mirrorCapture)
+        session.setShutterSoundEnabled(shutterSoundEnabled)
+        session.setWatermarkOptions(watermark)
+        session.setCaptureLocation(currentLocation)
+        session.setExtensionMode(extensionModeFor(mode, photoHdrEnabled))
         session.bind(
             previewView = previewView,
+            onQrCode = { value ->
+                qrResult = value
+                status = "QR code detected"
+            },
             onZslChanged = { active ->
                 status = if (active) "Instant shutter ready" else null
             },
             onCapabilities = { published ->
                 capabilities = published
                 if (!published.rawSupported) rawEnabled = false
+                if (videoFrameRate !in published.supportedVideoFrameRates) {
+                    videoFrameRate = published.supportedVideoFrameRates.first()
+                }
+                if (!published.maximumPhotoResolutionSupported) {
+                    photoResolution = PhotoResolution.STANDARD
+                }
+                if (!published.hdrExtensionAvailable) photoHdrEnabled = false
                 // Reflect what the session actually bound (a lens switch
                 // rebinds; the zoom follows the new lens) instead of
                 // snapping back to 1x like the old stop-based code did.
@@ -261,6 +351,55 @@ fun CameraScreen() {
         }
     }
 
+    LaunchedEffect(mode, photoHdrEnabled) {
+        if (mode == CameraMode.PHOTO) {
+            session.setExtensionMode(extensionModeFor(mode, photoHdrEnabled)) { error ->
+                status = error.message ?: "Could not apply the hardware photo extension"
+            }
+        }
+    }
+
+    LaunchedEffect(watermark) {
+        watermarkStore.save(watermark)
+        session.setWatermarkOptions(watermark)
+    }
+
+    LaunchedEffect(
+        flashChoice,
+        photoAspectRatio,
+        photoResolution,
+        videoQuality,
+        videoFrameRate,
+        selfTimer,
+        mirrorCapture,
+        shutterSoundEnabled,
+        photoHdrEnabled,
+        timeLapseSpeed,
+        slowMotionFps,
+        whiteBalance,
+        whiteBalanceKelvin,
+        bokehLevel,
+    ) {
+        capturePreferencesStore.save(
+            CapturePreferences(
+                flashChoice = flashChoice,
+                photoAspectRatio = photoAspectRatio,
+                photoResolution = photoResolution,
+                videoQuality = videoQuality,
+                videoFrameRate = videoFrameRate,
+                selfTimer = selfTimer,
+                mirrorCapture = mirrorCapture,
+                shutterSoundEnabled = shutterSoundEnabled,
+                photoHdrEnabled = photoHdrEnabled,
+                timeLapseSpeed = timeLapseSpeed,
+                slowMotionFps = slowMotionFps,
+                whiteBalance = whiteBalance,
+                whiteBalanceKelvin = whiteBalanceKelvin,
+                portraitBlurLevel = bokehLevel,
+            ),
+        )
+    }
+
     LaunchedEffect(status) {
         if (status != null) {
             delay(2400)
@@ -276,6 +415,7 @@ fun CameraScreen() {
 
     var previousMode by remember { mutableStateOf(CameraMode.PHOTO) }
     LaunchedEffect(mode) {
+        if (mode == CameraMode.QR) qrResult = null
         if (previousMode == CameraMode.PANORAMA && mode != CameraMode.PANORAMA) {
             panoramaCapture.reset()
             panoramaProgress = panoramaCapture.progress()
@@ -293,7 +433,14 @@ fun CameraScreen() {
             }
         } else if (previousMode.usesCamera2Recorder) {
             withContext(Dispatchers.IO) { camera2Recorder.stop() }
-            mode.session?.let { session.setMode(it, bindAfterChange = false) }
+            mode.session?.let {
+                session.setProfile(
+                    newMode = it,
+                    extensionMode = extensionModeFor(mode, photoHdrEnabled),
+                    bindAfterChange = false,
+                    macroMode = mode == CameraMode.MACRO,
+                )
+            }
             bindCameraX()
         }
         previousMode = mode
@@ -489,9 +636,10 @@ fun CameraScreen() {
 
     fun captureCurrentMode() {
         when (mode) {
-            CameraMode.NIGHT -> captureNight()
-            CameraMode.PORTRAIT -> capturePortrait()
+            CameraMode.NIGHT -> if (capabilities.extensionActive) captureNow() else captureNight()
+            CameraMode.PORTRAIT -> if (capabilities.extensionActive) captureNow() else capturePortrait()
             CameraMode.PANORAMA -> capturePanoramaFrame()
+            CameraMode.QR -> Unit
             else -> captureNow()
         }
     }
@@ -572,6 +720,23 @@ fun CameraScreen() {
                 factory = { previewView },
                 modifier = Modifier.fillMaxSize(),
             )
+        }
+
+        if (mode == CameraMode.QR) {
+            qrResult?.let { result ->
+                Text(
+                    text = result,
+                    color = White,
+                    fontFamily = FontFamily.Monospace,
+                    style = MaterialTheme.typography.labelMedium,
+                    modifier = Modifier
+                        .align(Alignment.Center)
+                        .clip(CircleShape)
+                        .background(Color(0xCC000000))
+                        .clickable { openQrResult(context, result) }
+                        .padding(horizontal = 18.dp, vertical = 12.dp),
+                )
+            }
         }
 
         GuideOverlay(
@@ -665,29 +830,72 @@ fun CameraScreen() {
         ) {
             IconButton(
                 enabled = !mode.usesCamera2Recorder &&
-                    mode != CameraMode.NIGHT && mode != CameraMode.PANORAMA,
+                    mode != CameraMode.NIGHT && mode != CameraMode.PANORAMA && mode != CameraMode.QR,
                 onClick = {
                     if (mode == CameraMode.VIDEO) {
                         val next = !torchEnabled
                         torchEnabled = next
                         session.setTorchEnabled(next)
                     } else {
-                        val next = !flashEnabled
-                        flashEnabled = next
-                        session.setFlashEnabled(next) { error ->
-                            status = error.message ?: "Could not toggle flash"
+                        flashChoice = flashChoice.next()
+                        session.setFlashChoice(flashChoice) { error ->
+                            status = error.message ?: "Could not change flash mode"
                         }
                     }
                 },
             ) {
-                val lightOn = if (mode == CameraMode.VIDEO) torchEnabled else flashEnabled
+                val image = when {
+                    mode == CameraMode.VIDEO -> if (torchEnabled) Icons.Outlined.FlashOn else Icons.Outlined.FlashOff
+                    flashChoice == FlashChoice.AUTO -> Icons.Outlined.FlashAuto
+                    flashChoice == FlashChoice.ON -> Icons.Outlined.FlashOn
+                    else -> Icons.Outlined.FlashOff
+                }
                 Icon(
-                    imageVector = if (lightOn) Icons.Outlined.FlashOn else Icons.Outlined.FlashOff,
-                    contentDescription = if (lightOn) "Turn light off" else "Turn light on",
+                    imageVector = image,
+                    contentDescription = if (mode == CameraMode.VIDEO) {
+                        if (torchEnabled) "Turn torch off" else "Turn torch on"
+                    } else {
+                        "Flash ${flashChoice.label}"
+                    },
                     tint = White,
                 )
             }
             Row(verticalAlignment = Alignment.CenterVertically) {
+                ToggleChip(
+                    label = "GEO",
+                    active = geotagEnabled,
+                    enabled = !recording && !specialStarting,
+                    onClick = {
+                        if (geotagEnabled) {
+                            geotagEnabled = false
+                            updateCaptureLocation(null)
+                            status = "Geotagging off"
+                        } else {
+                            val fineGranted = ContextCompat.checkSelfPermission(
+                                context,
+                                Manifest.permission.ACCESS_FINE_LOCATION,
+                            ) == PackageManager.PERMISSION_GRANTED
+                            val coarseGranted = ContextCompat.checkSelfPermission(
+                                context,
+                                Manifest.permission.ACCESS_COARSE_LOCATION,
+                            ) == PackageManager.PERMISSION_GRANTED
+                            if (fineGranted || coarseGranted) {
+                                geotagEnabled = true
+                                requestCurrentLocation(context) { location ->
+                                    updateCaptureLocation(location)
+                                    if (location != null) status = "Geotagging enabled"
+                                }
+                            } else {
+                                locationPermission.launch(
+                                    arrayOf(
+                                        Manifest.permission.ACCESS_COARSE_LOCATION,
+                                        Manifest.permission.ACCESS_FINE_LOCATION,
+                                    ),
+                                )
+                            }
+                        }
+                    },
+                )
                 if (mode == CameraMode.PHOTO) {
                     ToggleChip(
                         label = "TIMER ${selfTimer.label}",
@@ -780,6 +988,52 @@ fun CameraScreen() {
                 .padding(bottom = 28.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
+            if (mode == CameraMode.PHOTO) {
+                PhotoCaptureOptions(
+                    aspectRatio = photoAspectRatio,
+                    resolution = photoResolution,
+                    maximumSupported = capabilities.maximumPhotoResolutionSupported,
+                    hdrEnabled = photoHdrEnabled,
+                    hdrSupported = capabilities.hdrExtensionAvailable,
+                    mirrorCapture = mirrorCapture,
+                    shutterSoundEnabled = shutterSoundEnabled,
+                    onAspectRatio = { selected ->
+                        photoAspectRatio = selected
+                        session.setPhotoAspectRatio(selected) { error ->
+                            status = error.message ?: "Could not change aspect ratio"
+                        }
+                    },
+                    onResolution = {
+                        val next = if (photoResolution == PhotoResolution.STANDARD) {
+                            PhotoResolution.MAXIMUM
+                        } else {
+                            PhotoResolution.STANDARD
+                        }
+                        photoResolution = next
+                        session.setPhotoResolution(next) { error ->
+                            status = error.message ?: "Could not change photo size"
+                        }
+                        if (next == PhotoResolution.MAXIMUM) {
+                            status = "MAX uses largest reported JPEG; not a vendor 50MP remosaic mode"
+                        }
+                    },
+                    onHdrToggle = {
+                        photoHdrEnabled = !photoHdrEnabled
+                        session.setExtensionMode(
+                            if (photoHdrEnabled) ExtensionMode.HDR else ExtensionMode.NONE,
+                        ) { error -> status = error.message ?: "Could not toggle hardware HDR" }
+                    },
+                    onMirrorToggle = {
+                        mirrorCapture = !mirrorCapture
+                        session.setMirrorCaptureEnabled(mirrorCapture)
+                    },
+                    onShutterSoundToggle = {
+                        shutterSoundEnabled = !shutterSoundEnabled
+                        session.setShutterSoundEnabled(shutterSoundEnabled)
+                    },
+                )
+                Spacer(Modifier.height(8.dp))
+            }
             if (!mode.usesCamera2Recorder) {
                 ZoomPill(
                     stops = capabilities.zoomStops,
@@ -802,6 +1056,8 @@ fun CameraScreen() {
                         stabilization = capabilities.stabilization,
                         micEnabled = micEnabled,
                         quality = videoQuality,
+                        frameRate = videoFrameRate,
+                        supportedFrameRates = capabilities.supportedVideoFrameRates,
                         onStabToggle = {
                             val next = !stabilizationEnabled
                             stabilizationEnabled = next
@@ -831,6 +1087,29 @@ fun CameraScreen() {
                                 status = error.message ?: "Could not change resolution"
                             }
                         },
+                        onFrameRateClick = {
+                            videoFrameRate = session.setVideoFrameRate(
+                                videoFrameRate.next(capabilities.supportedVideoFrameRates),
+                            ) { error ->
+                                status = error.message ?: "Could not change frame rate"
+                            }
+                        },
+                        recording = recording,
+                        onSnapshot = {
+                            inFlight++
+                            session.capture(
+                                settings = processing,
+                                onSaved = {
+                                    inFlight--
+                                    status = "Video snapshot saved"
+                                },
+                                onNote = { note -> status = note },
+                                onError = { error ->
+                                    inFlight--
+                                    status = error.message ?: "Video snapshot failed"
+                                },
+                            )
+                        },
                     )
                     Spacer(Modifier.height(14.dp))
                 }
@@ -845,9 +1124,13 @@ fun CameraScreen() {
                         minFocusDistance = capabilities.minFocusDistance,
                         rawEnabled = rawEnabled,
                         rawSupported = capabilities.rawSupported,
+                        whiteBalance = whiteBalance,
+                        whiteBalanceKelvin = whiteBalanceKelvin,
                         onIsoChange = { isoGauge = it },
                         onSpeedChange = { speedGauge = it },
                         onFocusChange = { focusGauge = it },
+                        onWhiteBalanceChange = { whiteBalance = it },
+                        onWhiteBalanceKelvinChange = { whiteBalanceKelvin = it },
                         onCommit = {
                             session.setManualControls(
                                 ManualControls(
@@ -859,6 +1142,10 @@ fun CameraScreen() {
                                     },
                                     focusDiopters = capabilities.minFocusDistance?.let {
                                         ManualControlPlan.focusFor(focusGauge, it)
+                                    },
+                                    whiteBalance = whiteBalance,
+                                    colorTemperatureKelvin = whiteBalanceKelvin.takeIf {
+                                        whiteBalance == WhiteBalancePreset.CUSTOM
                                     },
                                 ),
                             ) { error ->
@@ -885,22 +1172,32 @@ fun CameraScreen() {
                         modifier = Modifier.width(280.dp),
                     ) {
                         Text(
-                            text = "SIMULATED BOKEH · NO DEPTH DATA",
+                            text = if (capabilities.extensionActive) {
+                                "CAMERA HARDWARE BOKEH"
+                            } else {
+                                "SIMULATED BOKEH · NO DEPTH DATA"
+                            },
                             color = DimWhite,
                             fontFamily = FontFamily.Monospace,
                             style = MaterialTheme.typography.labelSmall,
                         )
-                        Slider(
-                            value = bokehLevel,
-                            onValueChange = { bokehLevel = it },
-                        )
+                        if (!capabilities.extensionActive) {
+                            Slider(
+                                value = bokehLevel,
+                                onValueChange = { bokehLevel = it },
+                            )
+                        }
                     }
                     Spacer(Modifier.height(14.dp))
                 }
 
                 CameraMode.NIGHT -> {
                     Text(
-                        text = "4-FRAME SOFTWARE MERGE · DOWNSAMPLED",
+                        text = if (capabilities.extensionActive) {
+                            "CAMERA HARDWARE NIGHT"
+                        } else {
+                            "4-FRAME SOFTWARE MERGE · DOWNSAMPLED"
+                        },
                         color = DimWhite,
                         fontFamily = FontFamily.Monospace,
                         style = MaterialTheme.typography.labelSmall,
@@ -939,6 +1236,26 @@ fun CameraScreen() {
                     Spacer(Modifier.height(14.dp))
                 }
 
+                CameraMode.MACRO -> {
+                    Text(
+                        text = "CAMERA2 MACRO AUTOFOCUS · MIN FOCUS ${capabilities.minFocusDistance ?: 0f}D",
+                        color = DimWhite,
+                        fontFamily = FontFamily.Monospace,
+                        style = MaterialTheme.typography.labelSmall,
+                    )
+                    Spacer(Modifier.height(14.dp))
+                }
+
+                CameraMode.QR -> {
+                    Text(
+                        text = qrResult?.let { "CODE FOUND · TAP TO OPEN/COPY" } ?: "POINT AT A QR CODE",
+                        color = DimWhite,
+                        fontFamily = FontFamily.Monospace,
+                        style = MaterialTheme.typography.labelSmall,
+                    )
+                    Spacer(Modifier.height(14.dp))
+                }
+
                 CameraMode.SLOW_MOTION -> {
                     RateSelector(
                         label = "CAPTURE FPS",
@@ -966,21 +1283,27 @@ fun CameraScreen() {
 
             ModeSelector(
                 selected = mode,
+                macroSupported = capabilities.macroFocusSupported,
                 onSelect = { selected ->
                     if (recording || specialStarting || processingCapture) {
                         status = "Stop recording before switching modes"
+                    } else if (selected == CameraMode.MACRO && !capabilities.macroFocusSupported) {
+                        status = "This camera does not expose macro autofocus"
                     } else if (selected != mode) {
                         val previous = mode
                         mode = selected
                         if (!previous.usesCamera2Recorder && !selected.usesCamera2Recorder) {
                             selected.session?.let { sessionMode ->
-                                session.setMode(
+                                session.setProfile(
                                     newMode = sessionMode,
+                                    extensionMode = extensionModeFor(selected, photoHdrEnabled),
+                                    macroMode = selected == CameraMode.MACRO,
                                     onError = { error ->
                                         status = error.message ?: "Could not switch mode"
                                     },
                                 )
                             }
+                            if (selected == CameraMode.VIDEO) rawEnabled = false
                         }
                         if (selected != CameraMode.VIDEO) torchEnabled = false
                     }
@@ -1037,6 +1360,13 @@ fun CameraScreen() {
                         enabled = !specialStarting || recording,
                         onClick = { toggleCamera2Recording() },
                     )
+                } else if (mode == CameraMode.QR) {
+                    Text(
+                        text = if (qrResult == null) "SCANNING" else "SCANNED",
+                        color = White,
+                        fontFamily = FontFamily.Monospace,
+                        style = MaterialTheme.typography.labelSmall,
+                    )
                 } else {
                     ShutterButton(
                         capturing = inFlight > 0,
@@ -1088,6 +1418,8 @@ fun CameraScreen() {
                     processing = updated
                     store.save(updated)
                 },
+                watermark = watermark,
+                onWatermarkChange = { watermark = it },
                 onDismiss = { showProcessing = false },
             )
         }
@@ -1167,9 +1499,14 @@ private fun VideoChips(
     stabilization: StabilizationLevel,
     micEnabled: Boolean,
     quality: VideoQuality,
+    frameRate: VideoFrameRate,
+    supportedFrameRates: List<VideoFrameRate>,
+    recording: Boolean,
     onStabToggle: () -> Unit,
     onMicToggle: () -> Unit,
     onQualityClick: () -> Unit,
+    onFrameRateClick: () -> Unit,
+    onSnapshot: () -> Unit,
 ) {
     Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
         ToggleChip(
@@ -1190,6 +1527,18 @@ private fun VideoChips(
             enabled = true,
             onClick = onQualityClick,
         )
+        ToggleChip(
+            label = frameRate.label,
+            active = false,
+            enabled = supportedFrameRates.size > 1,
+            onClick = onFrameRateClick,
+        )
+        ToggleChip(
+            label = "SNAP",
+            active = false,
+            enabled = recording,
+            onClick = onSnapshot,
+        )
     }
 }
 
@@ -1204,9 +1553,13 @@ private fun ExpertControls(
     minFocusDistance: Float?,
     rawEnabled: Boolean,
     rawSupported: Boolean,
+    whiteBalance: WhiteBalancePreset,
+    whiteBalanceKelvin: Int,
     onIsoChange: (Float) -> Unit,
     onSpeedChange: (Float) -> Unit,
     onFocusChange: (Float) -> Unit,
+    onWhiteBalanceChange: (WhiteBalancePreset) -> Unit,
+    onWhiteBalanceKelvinChange: (Int) -> Unit,
     onCommit: () -> Unit,
     onRawToggle: () -> Unit,
 ) {
@@ -1236,6 +1589,47 @@ private fun ExpertControls(
                 onValueChange = onFocusChange,
                 onCommit = onCommit,
             )
+        }
+        Row(
+            modifier = Modifier
+                .width(320.dp)
+                .horizontalScroll(rememberScrollState()),
+            horizontalArrangement = Arrangement.spacedBy(5.dp),
+        ) {
+            WhiteBalancePreset.entries.forEach { preset ->
+                ToggleChip(
+                    label = preset.label,
+                    active = whiteBalance == preset,
+                    enabled = true,
+                    onClick = {
+                        onWhiteBalanceChange(preset)
+                        onCommit()
+                    },
+                )
+            }
+        }
+        if (whiteBalance == WhiteBalancePreset.CUSTOM) {
+            Row(
+                modifier = Modifier.width(320.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    text = "${whiteBalanceKelvin}K",
+                    color = White,
+                    fontFamily = FontFamily.Monospace,
+                    style = MaterialTheme.typography.labelSmall,
+                )
+                Slider(
+                    value = whiteBalanceKelvin.toFloat(),
+                    onValueChange = {
+                        onWhiteBalanceKelvinChange(it.toInt())
+                        onWhiteBalanceChange(WhiteBalancePreset.CUSTOM)
+                    },
+                    onValueChangeFinished = onCommit,
+                    valueRange = 2_000f..10_000f,
+                    modifier = Modifier.weight(1f),
+                )
+            }
         }
         Spacer(Modifier.height(6.dp))
         ToggleChip(
@@ -1322,6 +1716,7 @@ private fun ToggleChip(
 @Composable
 private fun ModeSelector(
     selected: CameraMode,
+    macroSupported: Boolean,
     onSelect: (CameraMode) -> Unit,
 ) {
     Row(
@@ -1333,7 +1728,9 @@ private fun ModeSelector(
             Column(
                 horizontalAlignment = Alignment.CenterHorizontally,
                 modifier = Modifier
-                    .clickable { onSelect(mode) }
+                    .clickable(enabled = mode != CameraMode.MACRO || macroSupported) {
+                        onSelect(mode)
+                    }
                     .padding(horizontal = 6.dp, vertical = 4.dp),
             ) {
                 Text(
@@ -1395,6 +1792,70 @@ private fun RateSelector(
                     )
                 }
             }
+        }
+    }
+}
+
+@Composable
+private fun PhotoCaptureOptions(
+    aspectRatio: PhotoAspectRatio,
+    resolution: PhotoResolution,
+    maximumSupported: Boolean,
+    hdrEnabled: Boolean,
+    hdrSupported: Boolean,
+    mirrorCapture: Boolean,
+    shutterSoundEnabled: Boolean,
+    onAspectRatio: (PhotoAspectRatio) -> Unit,
+    onResolution: () -> Unit,
+    onHdrToggle: () -> Unit,
+    onMirrorToggle: () -> Unit,
+    onShutterSoundToggle: () -> Unit,
+) {
+    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+        Text(
+            text = "ASPECT RATIO · MAX IS HARDWARE-DEPENDENT",
+            color = DimWhite,
+            fontFamily = FontFamily.Monospace,
+            style = MaterialTheme.typography.labelSmall,
+        )
+        Row(
+            modifier = Modifier
+                .padding(top = 5.dp)
+                .horizontalScroll(rememberScrollState()),
+            horizontalArrangement = Arrangement.spacedBy(5.dp),
+        ) {
+            PhotoAspectRatio.entries.forEach { option ->
+                ToggleChip(
+                    label = option.label,
+                    active = option == aspectRatio,
+                    enabled = true,
+                    onClick = { onAspectRatio(option) },
+                )
+            }
+            ToggleChip(
+                label = resolution.label,
+                active = resolution == PhotoResolution.MAXIMUM,
+                enabled = maximumSupported || resolution == PhotoResolution.MAXIMUM,
+                onClick = onResolution,
+            )
+            ToggleChip(
+                label = "HDR",
+                active = hdrEnabled,
+                enabled = hdrSupported,
+                onClick = onHdrToggle,
+            )
+            ToggleChip(
+                label = "MIRROR",
+                active = mirrorCapture,
+                enabled = true,
+                onClick = onMirrorToggle,
+            )
+            ToggleChip(
+                label = "SOUND",
+                active = shutterSoundEnabled,
+                enabled = true,
+                onClick = onShutterSoundToggle,
+            )
         }
     }
 }
@@ -1500,6 +1961,56 @@ private fun focusText(gauge: Float, minimumFocusDistance: Float?): String {
     val meters = if (diopters > 0f) 1f / diopters else Float.POSITIVE_INFINITY
     return String.format(Locale.US, "%.2fm", meters)
 }
+
+/** Requests one current fix without starting continuous background tracking. */
+private fun requestCurrentLocation(context: android.content.Context, onResult: (Location?) -> Unit) {
+    val fine = ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_FINE_LOCATION) ==
+        PackageManager.PERMISSION_GRANTED
+    val coarse = ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_COARSE_LOCATION) ==
+        PackageManager.PERMISSION_GRANTED
+    if (!fine && !coarse) {
+        onResult(null)
+        return
+    }
+    val manager = context.getSystemService(android.content.Context.LOCATION_SERVICE) as LocationManager
+    val provider = listOfNotNull(
+        if (fine) LocationManager.GPS_PROVIDER else null,
+        LocationManager.NETWORK_PROVIDER,
+        LocationManager.PASSIVE_PROVIDER,
+    ).firstOrNull { name -> runCatching { manager.isProviderEnabled(name) }.getOrDefault(false) }
+    if (provider == null) {
+        onResult(lastKnownLocation(manager))
+        return
+    }
+    runCatching {
+        manager.getCurrentLocation(
+            provider,
+            null,
+            ContextCompat.getMainExecutor(context),
+            Consumer { location -> onResult(location ?: lastKnownLocation(manager)) },
+        )
+    }.onFailure { onResult(lastKnownLocation(manager)) }
+}
+
+private fun openQrResult(context: android.content.Context, value: String) {
+    val uri = runCatching { Uri.parse(value) }.getOrNull()
+    if (uri?.scheme in setOf("https", "http", "mailto", "tel")) {
+        runCatching { context.startActivity(Intent(Intent.ACTION_VIEW, uri)) }
+        return
+    }
+    runCatching {
+        val clipboard = context.getSystemService(android.content.Context.CLIPBOARD_SERVICE) as ClipboardManager
+        clipboard.setPrimaryClip(ClipData.newPlainText("QR code", value))
+        Toast.makeText(context, "QR content copied", Toast.LENGTH_SHORT).show()
+    }
+}
+
+private fun lastKnownLocation(manager: LocationManager): Location? =
+    runCatching {
+        manager.getProviders(true)
+            .mapNotNull { provider -> runCatching { manager.getLastKnownLocation(provider) }.getOrNull() }
+            .maxByOrNull { it.time }
+    }.getOrNull()
 
 /** Layout constants for the focus ring and the brightness slider. */
 private val RING_SIZE_HALF = 27.dp

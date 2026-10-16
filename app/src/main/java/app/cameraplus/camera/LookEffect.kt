@@ -33,16 +33,18 @@ class LookParameters {
     @Volatile var noiseReduction: Float = 0f
     @Volatile var skinSmoothing: Float = 0f
     @Volatile var sharpening: Float = 0f
+    @Volatile var filter: Int = 0
 
     fun update(settings: ProcessingSettings) {
         hdr = settings.hdr
         noiseReduction = settings.noiseReduction
         skinSmoothing = settings.skinSmoothing
         sharpening = settings.sharpening
+        filter = settings.filter.ordinal
     }
 
     fun isNeutral(): Boolean =
-        hdr == 0f && noiseReduction == 0f && skinSmoothing == 0f && sharpening == 0f
+        hdr == 0f && noiseReduction == 0f && skinSmoothing == 0f && sharpening == 0f && filter == 0
 }
 
 /** Error hand-off between the GL thread and the session. */
@@ -125,6 +127,7 @@ private class LookRenderer(
     private var uniformNr = -1
     private var uniformSkin = -1
     private var uniformSharpen = -1
+    private var uniformFilter = -1
 
     private var textureId = 0
     private var inputTexture: SurfaceTexture? = null
@@ -269,6 +272,7 @@ private class LookRenderer(
             GLES20.glUniform1f(uniformNr, parameters.noiseReduction)
             GLES20.glUniform1f(uniformSkin, parameters.skinSmoothing)
             GLES20.glUniform1f(uniformSharpen, parameters.sharpening)
+            GLES20.glUniform1f(uniformFilter, parameters.filter.toFloat())
 
             GLES20.glActiveTexture(GLES20.GL_TEXTURE0)
             GLES20.glBindTexture(GLES11Ext.GL_TEXTURE_EXTERNAL_OES, textureId)
@@ -373,6 +377,7 @@ private class LookRenderer(
         uniformNr = GLES20.glGetUniformLocation(program, "uNr")
         uniformSkin = GLES20.glGetUniformLocation(program, "uSkin")
         uniformSharpen = GLES20.glGetUniformLocation(program, "uSharpen")
+        uniformFilter = GLES20.glGetUniformLocation(program, "uFilter")
         initialized = true
     }
 
@@ -431,6 +436,7 @@ private class LookRenderer(
             uniform float uNr;
             uniform float uSkin;
             uniform float uSharpen;
+            uniform float uFilter;
 
             vec3 tap(vec2 offset) {
                 return texture2D(uTexture, vTexCoord + offset * uTexel).rgb;
@@ -448,6 +454,24 @@ private class LookRenderer(
 
             void main() {
                 vec3 color = texture2D(uTexture, vTexCoord).rgb;
+
+                // Clean-room color looks, matched to ImageProcessor's ordering.
+                float luma = dot(color, vec3(0.299, 0.587, 0.114));
+                if (uFilter > 0.5 && uFilter < 1.5) {
+                    color = vec3(luma);
+                } else if (uFilter > 1.5 && uFilter < 2.5) {
+                    color *= vec3(1.08, 1.01, 0.90);
+                } else if (uFilter > 2.5 && uFilter < 3.5) {
+                    color *= vec3(0.91, 1.00, 1.09);
+                } else if (uFilter > 3.5 && uFilter < 4.5) {
+                    color = vec3(luma) + (color - vec3(luma)) * 1.28;
+                } else if (uFilter > 4.5) {
+                    color = vec3(
+                        dot(color, vec3(0.393, 0.769, 0.189)),
+                        dot(color, vec3(0.349, 0.686, 0.168)),
+                        dot(color, vec3(0.272, 0.534, 0.131))
+                    );
+                }
 
                 // Local average for the blend steps (mirrors the box blur).
                 vec3 blur = color * 0.2;

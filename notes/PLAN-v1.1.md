@@ -25,6 +25,15 @@
 - [x] Gallery grid, photo viewer and share; video playback opens the system player.
 - [x] Tap-to-meter, long-duration focus/meter lock and viewfinder EV slider.
 - [x] Self-timer 3s/10s and video quality-tier picker (HD/1080p/4K).
+- [x] Requested 30/60fps video targets, gated by CameraInfo's supported frame-rate ranges.
+- [x] Aspect-ratio crops, hardware-reported maximum JPEG size option, Auto flash and front mirror.
+- [x] Expert white-balance presets and approximate Kelvin gains.
+- [x] CameraX BOKEH/NIGHT/HDR extensions when advertised, with software fallbacks for portrait/night.
+- [x] Camera2 macro AF where the camera reports the macro AF mode.
+- [x] QR-only local scanning, gallery favorite/delete/info, opt-in geotag, shutter-sound toggle,
+      and configurable text watermark.
+- [x] Six clean-room color looks mirrored in the still processor and live preview shader.
+- [x] Four-frame simultaneous video snapshot use-case; hardware compatibility remains to be tested.
 - [ ] Full original parity — other settings and vendor-only features remain open in
       `FEATURE-COVERAGE.md`.
 
@@ -39,5 +48,5 @@
 
 - 2026-10-16: original inventory completed from the local decompilation; the full coverage matrix
   is in `FEATURE-COVERAGE.md`.
-- 2026-10-16: code changes build successfully; 166 JVM tests pass. No physical device is
+- 2026-10-16: code changes build successfully; 176 JVM tests pass. No physical device is
   connected, so camera behavior, actual latency and image quality remain unverified.

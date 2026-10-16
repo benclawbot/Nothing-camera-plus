@@ -60,7 +60,10 @@ dependencies {
     implementation(libs.androidx.camera.view)
     implementation(libs.androidx.camera.video)
     implementation(libs.androidx.camera.effects)
+    implementation(libs.androidx.camera.extensions)
     implementation(libs.androidx.concurrent.futures)
+    implementation(libs.androidx.exifinterface)
+    implementation(libs.zxing.core)
 
     testImplementation(libs.junit)
 

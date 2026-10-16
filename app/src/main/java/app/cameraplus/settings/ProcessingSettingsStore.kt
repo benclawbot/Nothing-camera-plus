@@ -17,6 +17,9 @@ class ProcessingSettingsStore(context: Context) {
         noiseReduction = sanitizeUnitFloat(prefs.getFloat(KEY_NOISE_REDUCTION, 0f)),
         hdr = sanitizeUnitFloat(prefs.getFloat(KEY_HDR, 0f)),
         skinSmoothing = sanitizeUnitFloat(prefs.getFloat(KEY_SKIN_SMOOTHING, 0f)),
+        filter = prefs.getString(KEY_FILTER, PhotoFilter.NATURAL.name)
+            ?.let { value -> PhotoFilter.entries.firstOrNull { it.name == value } }
+            ?: PhotoFilter.NATURAL,
     )
 
     fun save(settings: ProcessingSettings) {
@@ -25,6 +28,7 @@ class ProcessingSettingsStore(context: Context) {
             .putFloat(KEY_NOISE_REDUCTION, settings.noiseReduction)
             .putFloat(KEY_HDR, settings.hdr)
             .putFloat(KEY_SKIN_SMOOTHING, settings.skinSmoothing)
+            .putString(KEY_FILTER, settings.filter.name)
             .apply()
     }
 
@@ -33,6 +37,7 @@ class ProcessingSettingsStore(context: Context) {
         const val KEY_NOISE_REDUCTION = "noise_reduction"
         const val KEY_HDR = "hdr"
         const val KEY_SKIN_SMOOTHING = "skin_smoothing"
+        const val KEY_FILTER = "photo_filter"
     }
 }
 

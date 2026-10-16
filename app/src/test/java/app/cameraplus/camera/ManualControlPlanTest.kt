@@ -49,5 +49,16 @@ class ManualControlPlanTest {
     fun autoIsTheDefaultIntent() {
         assertTrue(ManualControls().isAuto())
         assertTrue(!ManualControls(iso = 400).isAuto())
+        assertTrue(!ManualControls(whiteBalance = WhiteBalancePreset.DAYLIGHT).isAuto())
+    }
+
+    @Test
+    fun customWhiteBalanceGainsAreFiniteAndBounded() {
+        for (kelvin in listOf(1_000, 2_000, 3_200, 5_500, 7_500, 12_000)) {
+            val gains = WhiteBalancePlan.gainsForKelvin(kelvin)
+            assertTrue(gains.red.isFinite() && gains.red in 0.25f..8f)
+            assertTrue(gains.green == 1f)
+            assertTrue(gains.blue.isFinite() && gains.blue in 0.25f..8f)
+        }
     }
 }

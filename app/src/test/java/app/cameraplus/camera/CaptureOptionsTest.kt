@@ -72,4 +72,32 @@ class CaptureOptionsTest {
         assertEquals(1, CaptureTimer.remaining(3, start, start + 2_500L))
         assertEquals(0, CaptureTimer.remaining(3, start, start + 9_000L))
     }
+
+    @Test
+    fun flashCycleIncludesOffAutoAndOn() {
+        assertEquals(FlashChoice.AUTO, FlashChoice.OFF.next())
+        assertEquals(FlashChoice.ON, FlashChoice.AUTO.next())
+        assertEquals(FlashChoice.OFF, FlashChoice.ON.next())
+    }
+
+    @Test
+    fun aspectRatioEntriesMatchStockLabelsAndExactFractions() {
+        assertEquals("20.5:9", PhotoAspectRatio.TWENTY_POINT_FIVE_NINE.label)
+        assertEquals(41, PhotoAspectRatio.TWENTY_POINT_FIVE_NINE.numerator)
+        assertEquals(18, PhotoAspectRatio.TWENTY_POINT_FIVE_NINE.denominator)
+        assertEquals(1, PhotoAspectRatio.SQUARE.numerator)
+        assertEquals(1, PhotoAspectRatio.SQUARE.denominator)
+    }
+
+    @Test
+    fun videoFrameRateCyclesOnlyAmongSupportedChoices() {
+        assertEquals(
+            VideoFrameRate.FPS_60,
+            VideoFrameRate.FPS_30.next(listOf(VideoFrameRate.FPS_30, VideoFrameRate.FPS_60)),
+        )
+        assertEquals(
+            VideoFrameRate.FPS_30,
+            VideoFrameRate.FPS_30.next(listOf(VideoFrameRate.FPS_30)),
+        )
+    }
 }

@@ -17,6 +17,7 @@ data class ProcessingSettings(
     val noiseReduction: Float = 0f,
     val hdr: Float = 0f,
     val skinSmoothing: Float = 0f,
+    val filter: PhotoFilter = PhotoFilter.NATURAL,
 ) {
     init {
         require(sharpening in 0f..1f) { "sharpening must be between 0 and 1" }
@@ -29,4 +30,14 @@ data class ProcessingSettings(
         /** Neutral intent: don't add processing on top of what the device does. */
         val NATURAL = ProcessingSettings()
     }
+}
+
+/** Clean-room still filters; these do not include or imitate vendor LUT assets. */
+enum class PhotoFilter(val label: String) {
+    NATURAL("NATURAL"),
+    MONOCHROME("B&W"),
+    WARM("WARM"),
+    COOL("COOL"),
+    VIVID("VIVID"),
+    VINTAGE("VINTAGE"),
 }

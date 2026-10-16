@@ -2,7 +2,10 @@ package app.cameraplus.processing
 
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
+import android.graphics.Matrix
+import android.location.Location
 import app.cameraplus.settings.ProcessingSettings
+import app.cameraplus.settings.WatermarkOptions
 import java.io.OutputStream
 
 /**
@@ -22,8 +25,12 @@ import java.io.OutputStream
  */
 object JpegProcessor {
 
-    /** Above this pixel count the frame is saved unprocessed rather than risking an OOM. */
-    private const val MAX_PIXELS = 8_000_000L
+    /** Pixel math uses full-size integer buffers, so keep its ceiling conservative. */
+    private const val MAX_COLOR_PROCESSING_PIXELS = 8_000_000L
+
+    /** A watermark-only Canvas pass needs just the bitmap, so it can cover 12 MP JPEGs. */
+    private const val MAX_BITMAP_ONLY_PIXELS = 24_000_000L
+    private const val MAX_BITMAP_MIRROR_PIXELS = 12_000_000L
 
     private const val JPEG_QUALITY = 95
 
@@ -31,15 +38,28 @@ object JpegProcessor {
      * @return true when the frame was processed and written, false when the
      *         caller should write the original bytes instead.
      */
-    fun process(jpegBytes: ByteArray, settings: ProcessingSettings, out: OutputStream): Boolean {
+    fun process(
+        jpegBytes: ByteArray,
+        settings: ProcessingSettings,
+        out: OutputStream,
+        mirrorHorizontal: Boolean = false,
+        watermark: WatermarkOptions = WatermarkOptions(),
+        location: Location? = null,
+    ): Boolean {
+        val requiresColorPixels = settings != ProcessingSettings.NATURAL
+        val maxPixels = when {
+            requiresColorPixels -> MAX_COLOR_PROCESSING_PIXELS
+            mirrorHorizontal -> MAX_BITMAP_MIRROR_PIXELS
+            else -> MAX_BITMAP_ONLY_PIXELS
+        }
         val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
         BitmapFactory.decodeByteArray(jpegBytes, 0, jpegBytes.size, bounds)
         if (bounds.outWidth <= 0 || bounds.outHeight <= 0 ||
-            bounds.outWidth.toLong() * bounds.outHeight.toLong() > MAX_PIXELS
+            bounds.outWidth.toLong() * bounds.outHeight.toLong() > maxPixels
         ) {
             return false
         }
-        val bitmap = try {
+        var bitmap = try {
             decode(jpegBytes)
         } catch (_: OutOfMemoryError) {
             null
@@ -47,12 +67,30 @@ object JpegProcessor {
         return try {
             val width = bitmap.width
             val height = bitmap.height
-            if (width.toLong() * height.toLong() > MAX_PIXELS) return false
+            if (width.toLong() * height.toLong() > maxPixels) return false
 
-            val pixels = IntArray(width * height)
-            bitmap.getPixels(pixels, 0, width, 0, 0, width, height)
-            ImageProcessor.apply(pixels, width, height, settings)
-            bitmap.setPixels(pixels, 0, width, 0, 0, width, height)
+            if (requiresColorPixels) {
+                val pixels = IntArray(width * height)
+                bitmap.getPixels(pixels, 0, width, 0, 0, width, height)
+                ImageProcessor.apply(pixels, width, height, settings)
+                if (mirrorHorizontal) ImageProcessor.mirrorHorizontally(pixels, width, height)
+                bitmap.setPixels(pixels, 0, width, 0, 0, width, height)
+            } else if (mirrorHorizontal) {
+                val mirrored = Bitmap.createBitmap(
+                    bitmap,
+                    0,
+                    0,
+                    width,
+                    height,
+                    Matrix().apply { postScale(-1f, 1f) },
+                    true,
+                )
+                if (mirrored !== bitmap) {
+                    bitmap.recycle()
+                    bitmap = mirrored
+                }
+            }
+            WatermarkRenderer.draw(bitmap, watermark, location)
 
             bitmap.compress(Bitmap.CompressFormat.JPEG, JPEG_QUALITY, out)
         } catch (t: Throwable) {
