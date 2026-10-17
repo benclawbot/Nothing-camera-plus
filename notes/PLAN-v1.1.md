@@ -52,9 +52,13 @@
       calibrated rotation as stills).
 - [ ] Verify video playback orientation for both recording paths (CameraX video and the
       Camera2 high-speed/time-lapse recorder); adjust the recorder hint if 180° off.
-- [ ] Verify the gallery hand-off on Nothing OS: the review action should land in the
-      default gallery app (no chooser), and the app should be fullscreen with no status bar.
-- [ ] Delete the two 0-byte MediaStore leftovers from the pre-fix capture path
+- [x] Verify the gallery hand-off on Nothing OS: verified — the gallery button opens the
+      Google Photos viewer directly on the newest capture (no chooser); the reference
+      phone has Nothing Gallery disabled, and the hand-off now picks the best live
+      viewer/gallery app via declared package visibility.
+- [x] Fresh still capture on-device: 1.02 MB JPEG in `Pictures/Camera+` with the repaired
+      EXIF orientation (3072×1728, tag 8); no errors in the capture path.
+- [x] Delete the two 0-byte MediaStore leftovers from the pre-fix capture path
       (`CameraPlus_1792175441365.jpg`, `CameraPlus_1792176319016.jpg`).
 
 ## Status log
@@ -74,3 +78,12 @@
 - 2026-10-17: gallery button now hands off to the device gallery app (AOSP review action
   pinned to the system gallery) with the in-app grid as fallback; the activity is now
   fullscreen (status bar hidden) like the original camera theme.
+- 2026-10-17: second on-device pass: the gallery hand-off initially fell back to the in-app
+  grid because Android 11+ package visibility hides other apps from `queryIntentActivities`
+  — fixed with a `<queries>` declaration plus a resolution chain (review action → default
+  viewer → gallery-only VIEW → gallery home) that never lands on the system chooser.
+  Verified: the button opens the Google Photos viewer on the newest capture. Top controls
+  now pad against the status-bar/display-cutout inset (fullscreen, no more mixing). Fresh
+  capture regression: 1.02 MB JPEG, orientation tag 8. The two 0-byte ghost rows were
+  deleted from MediaStore. 178 JVM tests pass.
+- 2026-10-17: released v1.1.0 (debug APK attached to the GitHub release).
