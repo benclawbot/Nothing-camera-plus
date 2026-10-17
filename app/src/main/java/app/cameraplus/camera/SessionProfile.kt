@@ -31,3 +31,6 @@ data class SessionCapabilities(
     val videoSnapshotSupported: Boolean = false,
     val videoNoiseReductionSupported: Boolean = false,
 )
+
+/** On-screen subject-tracking reticle size; also the AF/AE metering area. */
+const val SUBJECT_TRACKING_BOX_DP = 76f

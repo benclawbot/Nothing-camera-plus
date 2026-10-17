@@ -14,9 +14,12 @@ import android.media.MediaActionSound
 import android.hardware.camera2.CameraCharacteristics
 import android.hardware.camera2.CaptureRequest
 import android.net.Uri
+import android.os.SystemClock
+import android.util.Log
 import android.provider.MediaStore
 import android.util.Range
 import android.util.Rational
+import android.util.Size
 import androidx.camera.camera2.interop.Camera2CameraInfo
 import androidx.camera.camera2.interop.Camera2Interop
 import androidx.camera.core.Camera
@@ -55,6 +58,7 @@ import app.cameraplus.settings.WatermarkOptions
 import java.util.concurrent.Executor
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
+import kotlin.math.hypot
 
 /**
  * Thin wrapper around CameraX: binds Preview + ImageCapture (or Recorder for
@@ -105,6 +109,20 @@ class CameraSession(
 
         /** Above this size, expose a distinct MAX capture option. */
         const val STANDARD_PHOTO_PIXEL_THRESHOLD = 12_000_000L
+
+        /** Re-meter only when the subject moved this fraction of the view. */
+        const val TRACKING_METER_MOVE_FRACTION = 0.012f
+
+        /** Minimum gap between metering actions while the subject is moving. */
+        const val TRACKING_METER_INTERVAL_MS = 600L
+
+        /** Keep-alive re-meter even while the subject is still. */
+        const val TRACKING_METER_REFRESH_MS = 2_500L
+
+        /** Below this correlation score the tracker is not trusted to meter. */
+        const val TRACKING_LOST_CONFIDENCE = 0.45f
+
+        const val TRACKING_TAG = "SubjectTracking"
     }
 
     private var cameraProvider: ProcessCameraProvider? = null
@@ -121,6 +139,15 @@ class CameraSession(
     private var onZslChanged: (Boolean) -> Unit = {}
     private var onCapabilities: (SessionCapabilities) -> Unit = {}
     private var onQrCode: (String) -> Unit = {}
+    private var onSubjectTracked: (Float, Float, Float) -> Unit = { _, _, _ -> }
+    private var onSubjectTrackingCleared: () -> Unit = {}
+    private var onSubjectTrackingUnavailable: () -> Unit = {}
+    private val trackingExecutor: Executor = Executors.newSingleThreadExecutor()
+    private val subjectAnalyzer = SubjectTrackingAnalyzer()
+    private var subjectTrackingEnabled = false
+    private var lastTrackingMeterAt = 0L
+    private var lastTrackingMeterX = 0f
+    private var lastTrackingMeterY = 0f
     private var lensFacing = CameraSelector.LENS_FACING_BACK
     private var mode = SessionMode.PHOTO
     private var flashChoice = FlashChoice.OFF
@@ -166,6 +193,9 @@ class CameraSession(
         onZslChanged: (Boolean) -> Unit = {},
         onCapabilities: (SessionCapabilities) -> Unit = {},
         onQrCode: (String) -> Unit = {},
+        onSubjectTracked: (Float, Float, Float) -> Unit = { _, _, _ -> },
+        onSubjectTrackingCleared: () -> Unit = {},
+        onSubjectTrackingUnavailable: () -> Unit = {},
         onError: (Exception) -> Unit = {},
     ) {
         suspended = false
@@ -173,6 +203,22 @@ class CameraSession(
         this.onZslChanged = onZslChanged
         this.onCapabilities = onCapabilities
         this.onQrCode = onQrCode
+        this.onSubjectTracked = onSubjectTracked
+        this.onSubjectTrackingCleared = onSubjectTrackingCleared
+        this.onSubjectTrackingUnavailable = onSubjectTrackingUnavailable
+        subjectAnalyzer.onSelected = { x, y, score ->
+            mainExecutor.execute { handleTrackedPosition(x, y, score) }
+        }
+        subjectAnalyzer.onTracked = { x, y, score ->
+            mainExecutor.execute { handleTrackedPosition(x, y, score) }
+        }
+        subjectAnalyzer.onSelectFailed = {
+            mainExecutor.execute {
+                runCatching {
+                    errorSink(IllegalStateException("Pick a more detailed area to track"))
+                }
+            }
+        }
         errorSink = onError
         val future = ProcessCameraProvider.getInstance(context)
         future.addListener({
@@ -393,6 +439,167 @@ class CameraSession(
     /** Drops a metering lock created with [focusAndMeterAt] and its lock flag. */
     fun releaseFocusLock() {
         boundCamera?.cameraControl?.cancelFocusAndMetering()
+    }
+
+    /**
+     * Enables or disables subject tracking. Enabling rebinds so the analysis
+     * stream is present; disabling removes it and clears any locked subject.
+     */
+    fun setSubjectTrackingEnabled(enabled: Boolean, onError: (Exception) -> Unit = {}) {
+        if (subjectTrackingEnabled == enabled) return
+        subjectTrackingEnabled = enabled
+        subjectAnalyzer.setTrackingEnabled(enabled)
+        if (!enabled) clearSubjectTracking()
+        rebind(onError)
+    }
+
+    /**
+     * Locks the tracker onto the subject under preview-view pixels
+     * ([x], [y]) and focuses there. From then on every analyzed position
+     * moves the AF/AE metering point with the subject. Returns false while
+     * the analysis stream is not delivering frames yet.
+     */
+    fun selectSubjectAt(x: Float, y: Float): Boolean {
+        if (Log.isLoggable(TRACKING_TAG, Log.DEBUG)) {
+            Log.d(
+                TRACKING_TAG,
+                "select-request view=($x,$y) enabled=$subjectTrackingEnabled " +
+                    "analysis=${imageAnalysis != null} " +
+                    "frame=${subjectAnalyzer.frameWidth}x${subjectAnalyzer.frameHeight}",
+            )
+        }
+        if (!subjectTrackingEnabled || imageAnalysis == null) return false
+        val previewView = boundPreviewView ?: return false
+        val frameWidth = subjectAnalyzer.frameWidth
+        val frameHeight = subjectAnalyzer.frameHeight
+        if (frameWidth <= 0 || frameHeight <= 0) return false
+        val viewWidth = previewView.width.toFloat()
+        val viewHeight = previewView.height.toFloat()
+        if (viewWidth <= 0f || viewHeight <= 0f) return false
+        val visible = currentVisibleRect(frameWidth, frameHeight, viewWidth, viewHeight)
+        val normalized = TrackingGeometry.viewToFrame(
+            x, y, frameWidth, frameHeight, viewWidth, viewHeight, visible,
+        )
+        if (normalized.x !in 0f..1f || normalized.y !in 0f..1f) return false
+        val density = context.resources.displayMetrics.density
+        val scale = TrackingGeometry.scale(
+            frameWidth, frameHeight, viewWidth, viewHeight, visible,
+        )
+        val halfFraction = ((SUBJECT_TRACKING_BOX_DP * density / 2f) / scale / frameWidth)
+            .coerceIn(0.01f, 0.25f)
+        subjectAnalyzer.pendingSelection =
+            floatArrayOf(normalized.x, normalized.y, halfFraction)
+        if (Log.isLoggable(TRACKING_TAG, Log.DEBUG)) {
+            Log.d(
+                TRACKING_TAG,
+                "select view=($x,$y) frame=${frameWidth}x$frameHeight " +
+                    "norm=(${normalized.x},${normalized.y})",
+            )
+        }
+        // Immediate feedback: meter on the tap while the first frame locks.
+        meteringForTracking(x, y)
+        return true
+    }
+
+    /** Drops the tracked subject and its metering action; tracking stays armed. */
+    fun clearSubjectTracking() {
+        subjectAnalyzer.cancelSelection()
+        boundCamera?.cameraControl?.cancelFocusAndMetering()
+        lastTrackingMeterAt = 0L
+        runCatching { onSubjectTrackingCleared() }
+    }
+
+    /**
+     * The analysis frame is the upright sensor image after the shared zoom
+     * crop (Camera2's SCALER_CROP_REGION covers every stream in the
+     * session), so only the FILL_CENTER aspect crop remains to be applied.
+     */
+    private fun currentVisibleRect(
+        frameWidth: Int,
+        frameHeight: Int,
+        viewWidth: Float,
+        viewHeight: Float,
+    ): NormRect = TrackingGeometry.visibleRect(
+        NormRect.FULL, frameWidth, frameHeight, viewWidth, viewHeight,
+    )
+
+    /** Builds the analysis use case that feeds [subjectAnalyzer]. */
+    private fun buildTrackingAnalysis(): ImageAnalysis {
+        subjectAnalyzer.mirrorHorizontally = lensFacing == CameraSelector.LENS_FACING_FRONT
+        subjectAnalyzer.setTrackingEnabled(true)
+        return ImageAnalysis.Builder()
+            .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
+            .setResolutionSelector(
+                ResolutionSelector.Builder()
+                    .setResolutionStrategy(
+                        ResolutionStrategy(
+                            Size(640, 480),
+                            ResolutionStrategy.FALLBACK_RULE_CLOSEST_HIGHER_THEN_LOWER,
+                        ),
+                    )
+                    .build(),
+            )
+            .build()
+            .also { it.setAnalyzer(trackingExecutor, subjectAnalyzer) }
+    }
+
+    /** Maps an analyzed position onto the view and keeps AF/AE on it. */
+    private fun handleTrackedPosition(nx: Float, ny: Float, score: Float) {
+        if (!subjectTrackingEnabled) return
+        val previewView = boundPreviewView ?: return
+        val frameWidth = subjectAnalyzer.frameWidth
+        val frameHeight = subjectAnalyzer.frameHeight
+        if (frameWidth <= 0 || frameHeight <= 0) return
+        val viewWidth = previewView.width.toFloat()
+        val viewHeight = previewView.height.toFloat()
+        if (viewWidth <= 0f || viewHeight <= 0f) return
+        val visible = currentVisibleRect(frameWidth, frameHeight, viewWidth, viewHeight)
+        val point = TrackingGeometry.frameToView(
+            nx, ny, frameWidth, frameHeight, viewWidth, viewHeight, visible,
+        )
+        if (Log.isLoggable(TRACKING_TAG, Log.DEBUG)) {
+            Log.d(TRACKING_TAG, "track view=(" + point.x + "," + point.y + ") score=" + score)
+        }
+        runCatching { onSubjectTracked(point.x, point.y, score) }
+        // While the match is weak (subject occluded or gone), keep the last
+        // good metering point instead of chasing a wrong region.
+        if (score < TRACKING_LOST_CONFIDENCE && lastTrackingMeterAt != 0L) return
+        val now = SystemClock.uptimeMillis()
+        val moved = lastTrackingMeterAt == 0L ||
+            hypot(point.x - lastTrackingMeterX, point.y - lastTrackingMeterY) >
+            viewWidth * TRACKING_METER_MOVE_FRACTION
+        val due = if (moved) {
+            now - lastTrackingMeterAt >= TRACKING_METER_INTERVAL_MS
+        } else {
+            now - lastTrackingMeterAt >= TRACKING_METER_REFRESH_MS
+        }
+        if (due) meteringForTracking(point.x, point.y)
+    }
+
+    /** AF+AE metering on the tracked point, sized to the reticle. */
+    private fun meteringForTracking(viewX: Float, viewY: Float) {
+        val previewView = boundPreviewView ?: return
+        val camera = boundCamera ?: return
+        val density = context.resources.displayMetrics.density
+        val point = previewView.meteringPointFactory.createPoint(
+            viewX,
+            viewY,
+            SUBJECT_TRACKING_BOX_DP * density,
+        )
+        val builder = FocusMeteringAction.Builder(
+            point,
+            FocusMeteringAction.FLAG_AF or FocusMeteringAction.FLAG_AE,
+        )
+        // Replaced when the subject moves, cleared by the user: it must not
+        // time out in the middle of a shot.
+        builder.setAutoCancelDuration(LOCK_DURATION_SECONDS, TimeUnit.SECONDS)
+        camera.cameraControl.startFocusAndMetering(builder.build())
+        if (Log.isLoggable(TRACKING_TAG, Log.DEBUG)) {
+            Log.d(TRACKING_TAG, "meter view=($viewX,$viewY)")
+        }
+        lastTrackingMeterAt = SystemClock.uptimeMillis()
+        lastTrackingMeterX = viewX
+        lastTrackingMeterY = viewY
     }
 
     /**
@@ -1066,6 +1273,9 @@ class CameraSession(
 
     private fun bindInternal(provider: ProcessCameraProvider, previewView: PreviewView) {
         suspended = false
+        // A rebind tears the camera session down; the old subject template
+        // and its metering action do not survive it.
+        clearSubjectTracking()
         val layout = planLenses(provider)
         lensLayout = layout
         // Bind the lens the user is on, defaulting to the reference (main)
@@ -1173,6 +1383,11 @@ class CameraSession(
             capture = stillCapture
             useCases += stillCapture
             useCases += built
+            if (subjectTrackingEnabled) {
+                val tracking = buildTrackingAnalysis()
+                analysis = tracking
+                useCases += tracking
+            }
         } else if (mode == SessionMode.QR) {
             val built = ImageAnalysis.Builder()
                 .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
@@ -1207,6 +1422,11 @@ class CameraSession(
             }
             capture = built
             useCases += built
+            if (subjectTrackingEnabled) {
+                val tracking = buildTrackingAnalysis()
+                analysis = tracking
+                useCases += tracking
+            }
         }
 
         provider.unbindAll()
@@ -1217,7 +1437,36 @@ class CameraSession(
             provider.bindToLifecycle(lifecycleOwner, selector, sessionConfig)
         } catch (t: Throwable) {
             activeExtensionMode = ExtensionMode.NONE
-            if (mode == SessionMode.VIDEO && capture != null && video != null) {
+            var recovered: Camera? = null
+            if (analysis != null) {
+                // Subject tracking adds an analysis stream. If this camera
+                // cannot host it alongside the current combination, keep the
+                // camera usable and turn tracking off instead of failing.
+                provider.unbindAll()
+                val withoutTracking = useCases.filterNot { it === analysis }
+                val trackingFreeConfig =
+                    SessionConfig.Builder(*withoutTracking.toTypedArray()).apply {
+                        if (lookEnabled) addEffect(ensureLookEffect())
+                    }.build()
+                recovered = runCatching {
+                    provider.bindToLifecycle(lifecycleOwner, selector, trackingFreeConfig)
+                }.getOrNull()
+                if (recovered != null) {
+                    analysis = null
+                    subjectTrackingEnabled = false
+                    subjectAnalyzer.setTrackingEnabled(false)
+                    runCatching {
+                        errorSink(
+                            IllegalStateException(
+                                "Subject tracking is not supported with this camera",
+                                t,
+                            ),
+                        )
+                    }
+                    runCatching { onSubjectTrackingUnavailable() }
+                }
+            }
+            if (recovered == null && mode == SessionMode.VIDEO && capture != null && video != null) {
                 // Some camera/encoder combinations cannot bind preview + still
                 // snapshot + video simultaneously. Preserve video by dropping
                 // only the optional snapshot use case.
@@ -1226,9 +1475,10 @@ class CameraSession(
                     if (lookEnabled) addEffect(ensureLookEffect())
                 }.build()
                 capture = null
+                analysis = null
                 videoSnapshotSupported = false
                 runCatching { errorSink(IllegalStateException("Still snapshots are unavailable in this video configuration", t)) }
-                runCatching {
+                recovered = runCatching {
                     provider.bindToLifecycle(lifecycleOwner, selector, videoOnlyConfig)
                 }.getOrElse {
                     selectedCameraId = null
@@ -1238,16 +1488,25 @@ class CameraSession(
                         videoOnlyConfig,
                     )
                 }
-            } else {
+            }
+            if (recovered == null) {
                 // The chosen camera id can disappear (privacy toggle,
                 // concurrent use). Fall back to the platform default.
                 selectedCameraId = null
-                provider.bindToLifecycle(
+                recovered = provider.bindToLifecycle(
                     lifecycleOwner,
                     CameraSelector.Builder().requireLensFacing(lensFacing).build(),
                     sessionConfig,
                 )
             }
+            recovered
+        }
+        if (mode != SessionMode.QR && subjectTrackingEnabled && analysis == null) {
+            // The analysis stream never made it into the session: leave the
+            // camera usable, but be honest that tracking is off.
+            subjectTrackingEnabled = false
+            subjectAnalyzer.setTrackingEnabled(false)
+            runCatching { onSubjectTrackingUnavailable() }
         }
         if (mode == SessionMode.VIDEO && capture != null) videoSnapshotSupported = true
         imageCapture = capture

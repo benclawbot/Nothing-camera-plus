@@ -5,6 +5,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -19,6 +20,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.input.pointer.pointerInput
@@ -28,6 +30,7 @@ import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import app.cameraplus.camera.SUBJECT_TRACKING_BOX_DP
 import app.cameraplus.ui.theme.DimWhite
 import app.cameraplus.ui.theme.FaintWhite
 import app.cameraplus.ui.theme.White
@@ -68,6 +71,35 @@ fun FocusRing(
                     .align(Alignment.BottomCenter)
                     .size(16.dp),
             )
+        }
+    }
+}
+
+/**
+ * Subject-tracking reticle: four corner brackets around the tracked subject.
+ * It fades while the tracker is not confident (subject occluded or gone).
+ */
+@Composable
+fun TrackingReticle(
+    confidence: Float,
+    modifier: Modifier = Modifier,
+) {
+    val strong = confidence >= 0.5f
+    Box(modifier = modifier.size(SUBJECT_TRACKING_BOX_DP.dp)) {
+        Canvas(modifier = Modifier.fillMaxSize()) {
+            val color = if (strong) White else White.copy(alpha = 0.55f)
+            val stroke = 2.dp.toPx()
+            val corner = size.minDimension * 0.3f
+            // Top-left, top-right, bottom-left, bottom-right brackets.
+            drawLine(color, Offset(0f, 0f), Offset(corner, 0f), stroke)
+            drawLine(color, Offset(0f, 0f), Offset(0f, corner), stroke)
+            drawLine(color, Offset(size.width, 0f), Offset(size.width - corner, 0f), stroke)
+            drawLine(color, Offset(size.width, 0f), Offset(size.width, corner), stroke)
+            drawLine(color, Offset(0f, size.height), Offset(corner, size.height), stroke)
+            drawLine(color, Offset(0f, size.height), Offset(0f, size.height - corner), stroke)
+            drawLine(color, Offset(size.width, size.height), Offset(size.width - corner, size.height), stroke)
+            drawLine(color, Offset(size.width, size.height), Offset(size.width, size.height - corner), stroke)
+            drawCircle(color, radius = 2.5.dp.toPx())
         }
     }
 }

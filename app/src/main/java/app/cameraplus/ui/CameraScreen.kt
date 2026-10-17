@@ -44,6 +44,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Cameraswitch
+import androidx.compose.material.icons.outlined.FilterCenterFocus
 import androidx.compose.material.icons.outlined.FlashAuto
 import androidx.compose.material.icons.outlined.FlashOff
 import androidx.compose.material.icons.outlined.FlashOn
@@ -105,6 +106,7 @@ import app.cameraplus.camera.PortraitRenderer
 import app.cameraplus.camera.SelfTimer
 import app.cameraplus.camera.VideoQuality
 import app.cameraplus.camera.SessionCapabilities
+import app.cameraplus.camera.SUBJECT_TRACKING_BOX_DP
 import app.cameraplus.camera.SessionMode
 import app.cameraplus.camera.StabilizationLevel
 import app.cameraplus.camera.StabilizationProfile
@@ -159,6 +161,11 @@ private fun extensionModeFor(mode: CameraMode, photoHdrEnabled: Boolean): Int = 
     else -> ExtensionMode.NONE
 }
 
+/** Modes where the CameraX still/video pipeline can host the analyzer. */
+private fun CameraMode.supportsSubjectTracking(): Boolean =
+    !usesCamera2Recorder && this != CameraMode.PANORAMA &&
+        this != CameraMode.QR && this != CameraMode.EXPERT
+
 private fun CameraMode.zoomUseCase(): ZoomUseCase = when (this) {
     CameraMode.PORTRAIT, CameraMode.BEAUTY -> ZoomUseCase.PORTRAIT
     CameraMode.NIGHT -> ZoomUseCase.NIGHT
@@ -199,6 +206,12 @@ fun CameraScreen() {
     var focusLocked by remember { mutableStateOf(false) }
     var qrResult by remember { mutableStateOf<String?>(null) }
 
+    // Subject tracking: armed from the top bar; the next tap locks the
+    // analyzer onto that subject and the reticle follows it.
+    var trackingArmed by remember { mutableStateOf(capturePreferences.subjectTracking) }
+    var trackingPoint by remember { mutableStateOf<Offset?>(null) }
+    var trackingConfidence by remember { mutableFloatStateOf(1f) }
+
     // A metering ring that is not locked goes away on its own, like the
     // stock timer; a locked one stays until the next tap or mode switch.
     LaunchedEffect(focusTarget, focusLocked) {
@@ -221,6 +234,19 @@ fun CameraScreen() {
     val panoramaCapture = remember { PanoramaCapture() }
     var panoramaProgress by remember { mutableStateOf(panoramaCapture.progress()) }
     var panoramaDirection by remember { mutableStateOf(Direction.RIGHT) }
+
+    // The analyzer only runs in modes backed by the CameraX still/video
+    // pipeline; the armed preference survives a detour through other modes.
+    LaunchedEffect(mode, trackingArmed) {
+        val wanted = trackingArmed && mode.supportsSubjectTracking()
+        session.setSubjectTrackingEnabled(wanted) { error ->
+            status = error.message ?: "Could not change subject tracking"
+        }
+        if (!wanted) {
+            trackingPoint = null
+            trackingConfidence = 1f
+        }
+    }
 
     var capabilities by remember { mutableStateOf(SessionCapabilities()) }
     var zoom by remember { mutableFloatStateOf(1f) }
@@ -409,11 +435,26 @@ fun CameraScreen() {
         session.setWatermarkOptions(watermark)
         session.setCaptureLocation(currentLocation)
         session.setExtensionMode(extensionModeFor(mode, photoHdrEnabled))
+        // The session must already know whether to include the tracking
+        // analyzer when it binds.
+        session.setSubjectTrackingEnabled(trackingArmed && mode.supportsSubjectTracking())
         session.bind(
             previewView = previewView,
             onQrCode = { value ->
                 qrResult = value
                 status = "QR code detected"
+            },
+            onSubjectTracked = { x, y, confidence ->
+                trackingPoint = Offset(x, y)
+                trackingConfidence = confidence
+            },
+            onSubjectTrackingCleared = {
+                trackingPoint = null
+            },
+            onSubjectTrackingUnavailable = {
+                trackingArmed = false
+                trackingPoint = null
+                capturePreferencesStore.setSubjectTracking(false)
             },
             onZslChanged = { active ->
                 status = if (active) "Instant shutter ready" else null
@@ -944,20 +985,40 @@ fun CameraScreen() {
                 .pointerInput(Unit) {
                     detectTapGestures(
                         onTap = { offset ->
-                            if (touchShutter) {
-                                focusTarget = null
-                                pressStillShutter()
-                            } else {
-                                focusTarget = offset
-                                focusLocked = false
-                                evIndex = session.currentExposureCompensationIndex()
-                                session.focusAndMeterAt(offset.x, offset.y)
+                            when {
+                                trackingArmed && mode.supportsSubjectTracking() -> {
+                                    focusTarget = null
+                                    focusLocked = false
+                                    if (session.selectSubjectAt(offset.x, offset.y)) {
+                                        trackingPoint = offset
+                                        trackingConfidence = 1f
+                                        status = "Tracking subject"
+                                    } else {
+                                        status = "Tracking is starting — tap again"
+                                    }
+                                }
+                                touchShutter -> {
+                                    focusTarget = null
+                                    pressStillShutter()
+                                }
+                                else -> {
+                                    focusTarget = offset
+                                    focusLocked = false
+                                    evIndex = session.currentExposureCompensationIndex()
+                                    session.focusAndMeterAt(offset.x, offset.y)
+                                }
                             }
                         },
                         onLongPress = { offset ->
-                            focusTarget = offset
-                            focusLocked = true
-                            session.focusAndMeterAt(offset.x, offset.y, lock = true)
+                            if (trackingArmed && mode.supportsSubjectTracking()) {
+                                session.clearSubjectTracking()
+                                trackingPoint = null
+                                status = "Tracking cleared"
+                            } else {
+                                focusTarget = offset
+                                focusLocked = true
+                                session.focusAndMeterAt(offset.x, offset.y, lock = true)
+                            }
                         },
                     )
                 }
@@ -1004,6 +1065,23 @@ fun CameraScreen() {
                         },
                 )
             }
+            if (trackingArmed && mode.supportsSubjectTracking()) {
+                trackingPoint?.let { point ->
+                    val density = LocalDensity.current
+                    val halfPx = with(density) { (SUBJECT_TRACKING_BOX_DP / 2f).dp.toPx() }
+                    TrackingReticle(
+                        confidence = trackingConfidence,
+                        modifier = Modifier
+                            .align(Alignment.TopStart)
+                            .offset {
+                                IntOffset(
+                                    (point.x - halfPx).roundToInt(),
+                                    (point.y - halfPx).roundToInt(),
+                                )
+                            },
+                    )
+                }
+            }
         }
 
         Row(
@@ -1046,6 +1124,41 @@ fun CameraScreen() {
                     },
                     tint = White,
                 )
+            }
+            if (mode.supportsSubjectTracking()) {
+                IconButton(
+                    enabled = !recording && !specialStarting,
+                    onClick = {
+                        val next = !trackingArmed
+                        trackingArmed = next
+                        trackingPoint = null
+                        trackingConfidence = 1f
+                        capturePreferencesStore.setSubjectTracking(next)
+                        status = if (next) {
+                            "Subject tracking on — tap the subject"
+                        } else {
+                            "Subject tracking off"
+                        }
+                    },
+                ) {
+                    Icon(
+                        imageVector = Icons.Outlined.FilterCenterFocus,
+                        contentDescription = if (trackingArmed) {
+                            "Subject tracking on"
+                        } else {
+                            "Subject tracking off"
+                        },
+                        tint = if (trackingArmed) Black else White,
+                        modifier = if (trackingArmed) {
+                            Modifier
+                                .clip(CircleShape)
+                                .background(Color(0xE6FFFFFF))
+                                .padding(6.dp)
+                        } else {
+                            Modifier
+                        },
+                    )
+                }
             }
             Row(verticalAlignment = Alignment.CenterVertically) {
                 if (mode == CameraMode.PHOTO) {
