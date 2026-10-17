@@ -1,7 +1,7 @@
 package app.cameraplus.camera
 
-/** What the session drives: stills, video, or stills with manual controls. */
-enum class SessionMode { PHOTO, VIDEO, EXPERT, QR }
+/** What the session drives: stills, video, manual stills, QR analysis, or a panorama YUV stream. */
+enum class SessionMode { PHOTO, VIDEO, EXPERT, QR, PANORAMA }
 
 /**
  * What the bound camera can do, published after every bind so the UI can
@@ -10,6 +10,8 @@ enum class SessionMode { PHOTO, VIDEO, EXPERT, QR }
  */
 data class SessionCapabilities(
     val zoomStops: List<Float> = listOf(1f),
+    /** Physical focal-length stops exposed by the public camera API. */
+    val opticalZoomStops: List<Float> = listOf(1f),
     val minDisplayedZoom: Float = 1f,
     val maxDisplayedZoom: Float = 1f,
     val rawSupported: Boolean = false,

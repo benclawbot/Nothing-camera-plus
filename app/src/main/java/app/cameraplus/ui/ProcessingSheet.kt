@@ -179,7 +179,7 @@ fun ProcessingSheet(
                     }
                     Text(
                         text = "Resolution/frame-rate combinations depend on the camera and encoder.",
-                        color = FaintWhite,
+                        color = White,
                         style = MaterialTheme.typography.labelSmall,
                         modifier = Modifier.padding(top = 8.dp),
                     )
@@ -234,7 +234,7 @@ fun ProcessingSheet(
                     }
                     Text(
                         text = "Software stamps are clean-room generated; files use Camera+ media folders.",
-                        color = FaintWhite,
+                        color = White,
                         style = MaterialTheme.typography.labelSmall,
                         modifier = Modifier.padding(top = 8.dp),
                     )
@@ -303,14 +303,14 @@ private fun SettingsToggle(
     ) {
         Text(
             text = label,
-            color = if (enabled) DimWhite else FaintWhite,
+            color = White,
             fontFamily = FontFamily.Monospace,
             style = MaterialTheme.typography.labelSmall,
         )
         Spacer(Modifier.weight(1f))
         Text(
             text = if (active) "ON" else "OFF",
-            color = if (active) White else FaintWhite,
+            color = White,
             fontFamily = FontFamily.Monospace,
             style = MaterialTheme.typography.labelSmall,
         )
@@ -335,7 +335,7 @@ private fun WatermarkRow(label: String, active: Boolean, onClick: () -> Unit) {
         Spacer(Modifier.weight(1f))
         Text(
             text = if (active) "ON" else "OFF",
-            color = if (active) White else FaintWhite,
+            color = White,
             fontFamily = FontFamily.Monospace,
             style = MaterialTheme.typography.labelSmall,
         )

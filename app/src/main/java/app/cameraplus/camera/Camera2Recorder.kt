@@ -172,7 +172,8 @@ class Camera2Recorder(
      * (no session, no preview), so it is cheap, but it does touch the HAL.
      */
     fun supportedSlowMotionRates(): List<Int> = runCatching {
-        highSpeedOptions(backCamera().characteristics).flatMap { it.nominalRates() }
+        highSpeedOptions(backCamera().characteristics)
+            .flatMap { RecorderPlan.supportedSlowMotionRates(it.fpsRanges) }
     }.getOrDefault(emptyList())
         .distinct()
         .sorted()
@@ -360,7 +361,8 @@ class Camera2Recorder(
             val option = RecorderPlan.selectSlowMotionSize(options, slow.captureFps)
                 ?: throw IllegalStateException(
                      "this camera cannot record ${slow.captureFps} fps up to 4K; it offers " +
-                        options.flatMap { it.nominalRates() }.distinct().sorted(),
+                        options.flatMap { RecorderPlan.supportedSlowMotionRates(it.fpsRanges) }
+                            .distinct().sorted(),
                 )
             val range = option.bestRange(slow.captureFps)
                 ?: throw IllegalStateException("no fps bracket covers ${slow.captureFps}")
@@ -385,7 +387,18 @@ class Camera2Recorder(
                 .coerceIn(MIN_INTERVAL_SECONDS, MAX_INTERVAL_SECONDS),
             realSeconds = ESTIMATED_CLIP_SECONDS,
         )
-        val size = videoSizes(map).maxByOrNull { it.width.toLong() * it.height.toLong() }
+        // Time lapse is an ordinary camera2 + MediaRecorder session, not the
+        // constrained high-speed path. The largest advertised `MediaRecorder`
+        // size can still fail `MediaRecorder.prepare()` when combined with the
+        // low capture-rate hint and a TextureView preview (the target device
+        // advertises 4K but rejects this 4K time-lapse combination). Prefer the
+        // largest common FHD-or-smaller mode; step down only if the camera has
+        // no such output at all.
+        val sizes = videoSizes(map)
+        val size = sizes
+            .filter { it.width <= MAX_TIME_LAPSE_WIDTH && it.height <= MAX_TIME_LAPSE_HEIGHT }
+            .maxByOrNull { it.width.toLong() * it.height.toLong() }
+            ?: sizes.minByOrNull { it.width.toLong() * it.height.toLong() }
             ?: throw IllegalStateException("camera reports no supported video sizes")
         // The AE bracket stays at the camera's slowest: capturing far below any
         // bracket is the encoder's business, not auto-exposure's.
@@ -414,10 +427,6 @@ class Camera2Recorder(
     private fun configure(recorder: MediaRecorder, plan: Plan, descriptor: ParcelFileDescriptor) {
         if (plan.audioEnabled) requireMicPermission()
         val hint = orientationHint()
-        // Portrait app, landscape sensor: the hint rotates the file, and the
-        // encoder is told the dimensions it will actually end up producing.
-        val portrait = hint == 90 || hint == 270
-
         recorder.setVideoSource(MediaRecorder.VideoSource.SURFACE)
         if (plan.audioEnabled) recorder.setAudioSource(MediaRecorder.AudioSource.MIC)
         recorder.setOutputFormat(MediaRecorder.OutputFormat.MPEG_4)
@@ -425,10 +434,11 @@ class Camera2Recorder(
         // ~8x the 1080p baseline at 240 fps; see RecorderPlan.bitrateFor.
         recorder.setVideoEncodingBitRate(RecorderPlan.bitrateFor(plan.width, plan.height, plan.bitrateFps))
         recorder.setVideoEncoder(MediaRecorder.VideoEncoder.H264)
-        recorder.setVideoSize(
-            if (portrait) plan.height else plan.width,
-            if (portrait) plan.width else plan.height,
-        )
+        // `setOrientationHint` adds container rotation metadata; it does not
+        // change the encoder surface dimensions. In particular, constrained
+        // high-speed sessions require the exact native size advertised by
+        // `getHighSpeedVideoSizes`, or session configuration/recording fails.
+        recorder.setVideoSize(plan.width, plan.height)
         recorder.setOrientationHint(hint)
         recorder.setVideoFrameRate(plan.playbackFps)
         recorder.setCaptureRate(plan.captureRate.toDouble())
@@ -908,6 +918,8 @@ class Camera2Recorder(
         /** Capture rates MediaRecorder implementations actually accept. */
         const val MIN_INTERVAL_SECONDS = 0.2f
         const val MAX_INTERVAL_SECONDS = 32f
+        const val MAX_TIME_LAPSE_WIDTH = 1920
+        const val MAX_TIME_LAPSE_HEIGHT = 1080
 
         /**
          * Only used to turn a time-lapse interval into a capture rate; the real

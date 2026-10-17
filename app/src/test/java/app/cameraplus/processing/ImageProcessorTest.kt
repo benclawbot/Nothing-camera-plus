@@ -85,4 +85,48 @@ class ImageProcessorTest {
         assertTrue("dark side of the edge should darken", red(pixels[2]) < 100)
         assertTrue("bright side of the edge should brighten", red(pixels[3]) > 140)
     }
+
+    @Test
+    fun tiledProcessingIsPixelIdenticalAcrossTileBoundariesAndImageEdges() {
+        val width = 29
+        val height = 37
+        val source = IntArray(width * height) { index ->
+            val x = index % width
+            val y = index / width
+            val r = (x * 17 + y * 29) and 0xFF
+            val g = (x * 11 + y * 7) and 0xFF
+            val b = (x * 3 + y * 19) and 0xFF
+            rgb(r, g, b)
+        }
+        val settings = ProcessingSettings(
+            sharpening = 0.7f,
+            noiseReduction = 0.4f,
+            hdr = 0.3f,
+            skinSmoothing = 0.6f,
+            filter = PhotoFilter.WARM,
+        )
+        val expected = source.copyOf()
+        ImageProcessor.apply(expected, width, height, settings)
+        val actual = IntArray(source.size)
+
+        ImageProcessor.applyTiled(
+            width = width,
+            height = height,
+            settings = settings,
+            tileRows = 5,
+            readRow = { row, destination, offset ->
+                source.copyInto(destination, offset, row * width, (row + 1) * width)
+            },
+            writeRows = { firstRow, rowCount, processed, offset ->
+                processed.copyInto(actual, firstRow * width, offset, offset + rowCount * width)
+            },
+        )
+
+        val mismatches = expected.indices.filter { expected[it] != actual[it] }
+        assertTrue(
+            "tile halos must match full-frame convolution; mismatches=${mismatches.size}, " +
+                "first=${mismatches.firstOrNull()?.let { "$it:${expected[it]}!=${actual[it]}" }}",
+            mismatches.isEmpty(),
+        )
+    }
 }

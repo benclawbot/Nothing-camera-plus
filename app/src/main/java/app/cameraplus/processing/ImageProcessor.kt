@@ -23,6 +23,9 @@ object ImageProcessor {
 
     private const val NOISE_BLUR_RADIUS = 2
     private const val SKIN_BLUR_RADIUS = 3
+    private const val DEFAULT_TILE_ROWS = 128
+    /** NR radius 2 + skin radius 3 + sharpen radius 1, plus one safety row. */
+    private const val TILE_HALO_ROWS = 8
 
     /** Applies the non-neutral parts of [settings] in place, in a fixed order. */
     fun apply(pixels: IntArray, width: Int, height: Int, settings: ProcessingSettings) {
@@ -54,6 +57,41 @@ object ImageProcessor {
         }
         if (settings.sharpening > 0f) {
             sharpen(pixels, width, height, settings.sharpening)
+        }
+    }
+
+    /**
+     * Applies the complete intent in bounded horizontal tiles. [readRow] must
+     * provide the original, unmodified source rows while [writeRows] may
+     * commit processed core strips immediately. The halo covers the combined
+     * radius of every spatial pass, making seams identical to [apply] while
+     * avoiding full-frame ARGB and blur arrays.
+     */
+    fun applyTiled(
+        width: Int,
+        height: Int,
+        settings: ProcessingSettings,
+        tileRows: Int = DEFAULT_TILE_ROWS,
+        readRow: (row: Int, destination: IntArray, offset: Int) -> Unit,
+        writeRows: (firstRow: Int, rowCount: Int, source: IntArray, offset: Int) -> Unit,
+    ) {
+        require(width > 0 && height > 0) { "image must not be empty" }
+        require(tileRows > 0) { "tileRows must be positive" }
+        val halo = TILE_HALO_ROWS
+        var firstRow = 0
+        while (firstRow < height) {
+            val rowCount = minOf(tileRows, height - firstRow)
+            val contextStart = (firstRow - halo).coerceAtLeast(0)
+            val contextEnd = (firstRow + rowCount + halo).coerceAtMost(height)
+            val tileHeight = contextEnd - contextStart
+            val tile = IntArray(width * tileHeight)
+            for (tileRow in 0 until tileHeight) {
+                readRow(contextStart + tileRow, tile, tileRow * width)
+            }
+            apply(tile, width, tileHeight, settings)
+            val coreOffset = (firstRow - contextStart) * width
+            writeRows(firstRow, rowCount, tile, coreOffset)
+            firstRow += rowCount
         }
     }
 

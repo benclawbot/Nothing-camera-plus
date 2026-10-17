@@ -12,6 +12,7 @@ import android.hardware.camera2.params.RggbChannelVector
 import android.location.Location
 import android.media.MediaActionSound
 import android.hardware.camera2.CameraCharacteristics
+import android.hardware.camera2.CameraManager
 import android.hardware.camera2.CaptureRequest
 import android.net.Uri
 import android.os.SystemClock
@@ -20,6 +21,8 @@ import android.provider.MediaStore
 import android.util.Range
 import android.util.Rational
 import android.util.Size
+import android.view.OrientationEventListener
+import android.view.Surface
 import androidx.camera.camera2.interop.Camera2CameraInfo
 import androidx.camera.camera2.interop.Camera2Interop
 import androidx.camera.core.Camera
@@ -32,8 +35,9 @@ import androidx.camera.core.ImageCaptureException
 import androidx.camera.core.ImageProxy
 import androidx.camera.core.MirrorMode
 import androidx.camera.core.Preview
-import androidx.camera.core.SessionConfig
 import androidx.camera.core.UseCase
+import androidx.camera.core.UseCaseGroup
+import androidx.camera.core.ViewPort
 import androidx.camera.core.resolutionselector.ResolutionSelector
 import androidx.camera.core.resolutionselector.ResolutionStrategy
 import androidx.camera.lifecycle.ProcessCameraProvider
@@ -55,9 +59,11 @@ import app.cameraplus.processing.JpegProcessor
 import app.cameraplus.processing.WatermarkRenderer
 import app.cameraplus.settings.ProcessingSettings
 import app.cameraplus.settings.WatermarkOptions
+import java.io.ByteArrayOutputStream
 import java.util.concurrent.Executor
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.math.hypot
 
 /**
@@ -96,6 +102,7 @@ class CameraSession(
     private val mainExecutor: Executor = ContextCompat.getMainExecutor(context)
     private val ioExecutor: Executor = Executors.newSingleThreadExecutor()
     private val qrExecutor: Executor = Executors.newSingleThreadExecutor()
+    private val panoramaExecutor: Executor = Executors.newSingleThreadExecutor()
 
     private companion object {
         /** How long a plain tap-to-focus keeps its metering point. */
@@ -123,6 +130,22 @@ class CameraSession(
         const val TRACKING_LOST_CONFIDENCE = 0.45f
 
         const val TRACKING_TAG = "SubjectTracking"
+
+        /** Debug-gated tag for Sensor-driven capture orientation. */
+        const val ORIENTATION_TAG = "CaptureOrientation"
+
+        /** Debug-gated lens-to-displayed-zoom mapping. */
+        const val LENS_PLAN_TAG = "CameraLensPlan"
+
+        /** Debug-gated tag for the live panorama frame stream. */
+        const val PANORAMA_TAG = "PanoramaStream"
+
+        /**
+         * Minimum gap between analysis frames handed to the panorama stream.
+         * The stitcher wants a healthy overlap between frames; a faster
+         * stream would only produce near-duplicates that get rejected.
+         */
+        const val PANORAMA_STREAM_INTERVAL_MS = 120L
     }
 
     private var cameraProvider: ProcessCameraProvider? = null
@@ -134,6 +157,9 @@ class CameraSession(
     private var imageCapture: ImageCapture? = null
     private var videoCapture: VideoCapture<Recorder>? = null
     private var imageAnalysis: ImageAnalysis? = null
+    private var panoramaAnalysis: ImageAnalysis? = null
+    private var panoramaAnalyzer: PanoramaStreamAnalyzer? = null
+    private var previewUseCase: Preview? = null
     private var videoSnapshotSupported = false
     private var boundPreviewView: PreviewView? = null
     private var onZslChanged: (Boolean) -> Unit = {}
@@ -149,6 +175,33 @@ class CameraSession(
     private var lastTrackingMeterX = 0f
     private var lastTrackingMeterY = 0f
     private var lensFacing = CameraSelector.LENS_FACING_BACK
+
+    /**
+     * Rounded device pose (clockwise degrees from natural portrait), kept up
+     * to date by the orientation sensors while the session is bound. Every
+     * still path combines it with the camera's `SENSOR_ORIENTATION` so saved
+     * pictures are upright for how the phone was actually held, instead of a
+     * fixed angle.
+     */
+    private var poseDegrees = 0
+    private var orientationListening = false
+    private val orientationListener = object : OrientationEventListener(context) {
+        override fun onOrientationChanged(orientation: Int) {
+            if (orientation == OrientationEventListener.ORIENTATION_UNKNOWN) return
+            val nextPose = CaptureOrientation.roundPoseDegrees(orientation)
+            if (nextPose == poseDegrees) return
+            poseDegrees = nextPose
+            val rotation = surfaceRotationForPose(nextPose)
+            if (Log.isLoggable(ORIENTATION_TAG, Log.DEBUG)) {
+                Log.d(ORIENTATION_TAG, "pose=$nextPose previewTargetRotation=$rotation")
+            }
+            previewUseCase?.targetRotation = rotation
+            videoCapture?.targetRotation = rotation
+            // Rotate the camera content in place. The shared crop remains
+            // tied to the pinned capture target, while PreviewView applies
+            // this pose rotation inside the portrait-locked UI.
+        }
+    }
     private var mode = SessionMode.PHOTO
     private var flashChoice = FlashChoice.OFF
     private var screenFlash: ImageCapture.ScreenFlash? = null
@@ -200,6 +253,10 @@ class CameraSession(
     ) {
         suspended = false
         boundPreviewView = previewView
+        if (!orientationListening) {
+            orientationListener.enable()
+            orientationListening = true
+        }
         this.onZslChanged = onZslChanged
         this.onCapabilities = onCapabilities
         this.onQrCode = onQrCode
@@ -238,6 +295,7 @@ class CameraSession(
 
     fun unbind() {
         suspended = true
+        stopPanoramaStream()
         activeRecording?.close()
         activeRecording = null
         onVideoFinished = null
@@ -248,8 +306,15 @@ class CameraSession(
         videoCapture = null
         imageAnalysis?.clearAnalyzer()
         imageAnalysis = null
+        previewUseCase = null
+        panoramaAnalysis = null
+        panoramaAnalyzer = null
         shutterSound?.release()
         shutterSound = null
+        if (orientationListening) {
+            orientationListener.disable()
+            orientationListening = false
+        }
     }
 
     /**
@@ -280,6 +345,9 @@ class CameraSession(
         if (macroMode && onCapabilitiesState?.macroFocusSupported != true) {
             onError(IllegalStateException("This camera does not expose macro autofocus"))
             return
+        }
+        if (mode == SessionMode.PANORAMA && newMode != SessionMode.PANORAMA) {
+            stopPanoramaStream()
         }
         mode = newMode
         requestedExtensionMode = if (newMode == SessionMode.VIDEO) ExtensionMode.NONE else extensionMode
@@ -400,6 +468,30 @@ class CameraSession(
      */
     fun setLook(settings: ProcessingSettings, onError: (Exception) -> Unit = {}) {
         lookParameters.update(settings)
+        val desired = !lookParameters.isNeutral()
+        if (desired != lookEnabled) {
+            lookEnabled = desired
+            rebind(onError)
+        }
+    }
+
+    /**
+     * Enables the clearly simulated, face-independent portrait preview mask
+     * when no CameraX BOKEH extension is active. The capture path uses the same
+     * mask model; neither path claims depth data.
+     */
+    fun setPortraitBokehPreview(
+        enabled: Boolean,
+        level: Float,
+        onError: (Exception) -> Unit = {},
+    ) {
+        lookParameters.portraitBokeh = if (
+            enabled && requestedExtensionMode != ExtensionMode.BOKEH && activeExtensionMode != ExtensionMode.BOKEH
+        ) {
+            level.coerceIn(0f, 1f)
+        } else {
+            0f
+        }
         val desired = !lookParameters.isNeutral()
         if (desired != lookEnabled) {
             lookEnabled = desired
@@ -635,6 +727,13 @@ class CameraSession(
         if (layout == null || camera == null) return applyZoomRatio(displayed)
         val currentId = Camera2CameraInfo.from(camera.cameraInfo).cameraId
         val target = layout.targetFor(displayed, currentId)
+        if (Log.isLoggable(LENS_PLAN_TAG, Log.DEBUG)) {
+            Log.d(
+                LENS_PLAN_TAG,
+                "request=$displayed current=$currentId -> camera=${target.cameraId} " +
+                    "ratio=${target.zoomRatio} displayed=${target.displayedZoom} rebind=${target.needsRebind}",
+            )
+        }
         if (target.needsRebind) {
             selectedCameraId = target.cameraId
             pendingZoomRatio = target.zoomRatio
@@ -766,7 +865,7 @@ class CameraSession(
             return
         }
         if (enabled && onCapabilitiesState?.videoNoiseReductionSupported != true) {
-            onError(IllegalStateException("The camera does not report video noise reduction"))
+            onError(IllegalStateException("The camera does not report the safe video noise-reduction mode"))
             return
         }
         videoNoiseReductionEnabled = enabled
@@ -809,9 +908,13 @@ class CameraSession(
     }
 
     /**
-     * Captures a still. [settings] controls whether the frame goes straight
-     * to MediaStore (neutral intent) or through software processing first.
-     * RAW captures bypass the pipeline entirely: the DNG is the product.
+     * Captures a still. [settings] controls whether the file goes straight to
+     * MediaStore (neutral intent) or through software processing first. Every
+     * path makes the saved frame upright for the pose the phone was in when
+     * the shutter fired: the pose is snapshotted here so a later rotation can
+     * not skew the math. Neutral disk captures only re-encode when the pose
+     * needs more than the pipeline already applied; RAW captures bypass the
+     * pipeline entirely: the DNG is the product.
      */
     fun capture(
         settings: ProcessingSettings,
@@ -823,21 +926,25 @@ class CameraSession(
             onError(IllegalStateException("Camera is not ready"))
             return
         }
+        val uprightRotation = uprightCaptureRotation()
         when {
-            rawEnabled -> captureRawToFile(capture, onSaved, onError)
-            settings == ProcessingSettings.NATURAL && !watermarkOptions.enabled ->
-                captureToFile(capture, onSaved, onError)
-            else -> captureToMemory(capture, settings, onSaved, onNote, onError)
+            rawEnabled -> captureRawToFile(capture, uprightRotation, onSaved, onError)
+            settings == ProcessingSettings.NATURAL &&
+                !watermarkOptions.enabled &&
+                !shouldMirrorCapture() ->
+                captureToFile(capture, uprightRotation, onSaved, onError)
+            else ->
+                captureToMemory(capture, uprightRotation, settings, onSaved, onNote, onError)
         }
     }
 
-    /** A downsampled, upright ARGB frame for panorama/night/portrait math. */
+    /** A downsampled, upright ARGB frame for night/portrait software processing. */
     data class PixelFrame(val pixels: IntArray, val width: Int, val height: Int)
 
     /**
      * Captures one JPEG in memory, downsamples it before allocating pixel
      * buffers, applies the JPEG rotation, and hands an ARGB frame to [onFrame].
-     * Used by the clean-room panorama/night/portrait modes; those deliberately
+     * Used by the clean-room night/portrait modes; those deliberately
      * work at a bounded resolution rather than risking a 50 MP heap crash.
      */
     fun capturePixelFrame(
@@ -850,18 +957,19 @@ class CameraSession(
             onError(IllegalStateException("Camera is not ready"))
             return
         }
+        val uprightRotation = uprightCaptureRotation()
         capture.takePicture(mainExecutor, object : ImageCapture.OnImageCapturedCallback() {
             override fun onCaptureStarted() = playShutterSound()
 
             override fun onCaptureSuccess(image: ImageProxy) {
-                // The HAL buffer's orientation is a property of the JPEG
-                // encoder, not of CameraX's rotation metadata (which the
-                // reference device's HAL does not honor); use the calibrated
-                // value every still path shares.
+                // The buffer may already carry part of the uprighting: the
+                // reference device's HAL bakes CameraX's requested rotation
+                // into the JPEG pixels, so only the pose difference is left.
+                val deliveredRotation = image.imageInfo.rotationDegrees
                 val captured = runCatching { image.toJpegBytes() }
                 image.close()
                 val jpeg = captured.getOrNull()
-                val rotation = uprightCaptureRotation()
+                val rotation = remainingRotation(uprightRotation, deliveredRotation)
                 if (jpeg == null) {
                     onError(
                         captured.exceptionOrNull()?.asException()
@@ -890,6 +998,126 @@ class CameraSession(
                 onError(exception)
             }
         })
+    }
+
+    /** One converted, pose-upright frame of a live panorama sweep. */
+    data class PanoramaFrame(
+        val pixels: IntArray,
+        val width: Int,
+        val height: Int,
+        /** Clockwise rotation that was applied to the sensor buffer. */
+        val rotationDegrees: Int,
+        val timestampNanos: Long,
+    )
+
+    /**
+     * Attaches the live frame stream for a panorama sweep: every analysis
+     * frame is converted to pose-upright ARGB (see [YuvFrameConverter]) and
+     * handed to [onFrame] from the analysis thread.
+     *
+     * The rotation is frozen at the start of the sweep, so the whole sweep
+     * shares one frame orientation even while the phone moves — the stitcher
+     * needs that consistency. Returns `false` (through [onError] as well) when
+     * the session is not bound in panorama shape, i.e. the caller switched
+     * modes without rebinding.
+     */
+    fun startPanoramaStream(
+        maxDimension: Int,
+        onFrame: (PanoramaFrame) -> Unit,
+        onError: (Exception) -> Unit,
+    ): Boolean {
+        require(maxDimension > 0) { "maxDimension must be positive" }
+        val analysis = panoramaAnalysis
+        if (analysis == null || imageAnalysis !== analysis) {
+            onError(IllegalStateException("The panorama stream is not available on this camera"))
+            return false
+        }
+        val uprightRotation = uprightCaptureRotation()
+        val analyzer = PanoramaStreamAnalyzer(maxDimension, uprightRotation, onFrame, onError)
+        panoramaAnalyzer = analyzer
+        analysis.setAnalyzer(panoramaExecutor, analyzer)
+        return true
+    }
+
+    /** Detaches the panorama analyzer; the use case itself stays bound. */
+    fun stopPanoramaStream() {
+        panoramaAnalyzer?.stop()
+        panoramaAnalyzer = null
+        panoramaAnalysis?.clearAnalyzer()
+    }
+
+    /**
+     * The analysis-side half of the sweep: throttles the frame rate to
+     * something the stitcher likes, converts each frame, and hands it over.
+     *
+     * Frames are dropped while a previous one is still being converted
+     * ([busy]) and when the previous conversion is less than
+     * [PANORAMA_STREAM_INTERVAL_MS] old, so a 30 fps stream cannot starve the
+     * UI thread or the matcher. Every proxy is closed.
+     */
+    private inner class PanoramaStreamAnalyzer(
+        private val maxDimension: Int,
+        private val uprightRotation: Int,
+        private val onFrame: (PanoramaFrame) -> Unit,
+        private val onError: (Exception) -> Unit,
+    ) : ImageAnalysis.Analyzer {
+
+        private val busy = AtomicBoolean(false)
+        @Volatile private var lastProcessedNanos = 0L
+        @Volatile private var stopped = false
+
+        @Synchronized
+        fun stop() {
+            stopped = true
+        }
+
+        @Synchronized
+        override fun analyze(image: ImageProxy) {
+            try {
+                if (stopped) return
+                val now = System.nanoTime()
+                if (now - lastProcessedNanos < PANORAMA_STREAM_INTERVAL_MS * 1_000_000L) return
+                if (!busy.compareAndSet(false, true)) return
+                lastProcessedNanos = now
+
+                // ImageAnalysis delivers sensor-oriented YUV pixels; unlike
+                // ImageCapture, no rotation has been baked into this buffer.
+                // Use the sweep's pose snapshot directly, rather than the
+                // still path's HAL-compensation formula.
+                val rotation = uprightRotation
+                val planes = image.planes
+                val converted = runCatching {
+                    YuvFrameConverter.toArgb(
+                        y = planes[0].buffer, yRowStride = planes[0].rowStride, yPixelStride = planes[0].pixelStride,
+                        u = planes[1].buffer, uRowStride = planes[1].rowStride, uPixelStride = planes[1].pixelStride,
+                        v = planes[2].buffer, vRowStride = planes[2].rowStride, vPixelStride = planes[2].pixelStride,
+                        width = image.width,
+                        height = image.height,
+                        rotationDegrees = rotation,
+                        maxDimension = maxDimension,
+                    )
+                }
+                val (pixels, width, height) = converted.getOrElse { error ->
+                    runCatching { onError(error.asException()) }
+                    return
+                }
+                if (Log.isLoggable(PANORAMA_TAG, Log.DEBUG)) {
+                    Log.d(
+                        PANORAMA_TAG,
+                        "frame ${width}x$height rotation=$rotation " +
+                            "(sensor=${sensorOrientationDegrees()} delivered=${image.imageInfo.rotationDegrees})",
+                    )
+                }
+                runCatching {
+                    onFrame(PanoramaFrame(pixels, width, height, rotation, image.imageInfo.timestamp))
+                }.onFailure { error ->
+                    runCatching { onError(error.asException()) }
+                }
+            } finally {
+                busy.set(false)
+                image.close()
+            }
+        }
     }
 
     /** Saves a processed ARGB frame to Pictures/Camera+ as a JPEG. */
@@ -1011,6 +1239,7 @@ class CameraSession(
      */
     private fun captureRawToFile(
         capture: ImageCapture,
+        uprightRotation: Int,
         onSaved: (Uri) -> Unit,
         onError: (Exception) -> Unit,
     ) {
@@ -1064,8 +1293,9 @@ class CameraSession(
                         ImageFormat.JPEG -> jpegSavedUri = outputFileResults.savedUri
                     }
                     if (rawSaved && jpegSavedUri != null) {
-                        fixUndefinedExifOrientation(jpegSavedUri!!)
-                        completeOnce { onSaved(jpegSavedUri!!) }
+                        bakeSavedJpeg(jpegSavedUri!!, uprightRotation) {
+                            completeOnce { onSaved(jpegSavedUri!!) }
+                        }
                     }
                 }
 
@@ -1090,9 +1320,16 @@ class CameraSession(
         return uri to values
     }
 
-    /** Fast path: the JPEG (and DNG, in RAW mode) goes straight to the file. */
+    /**
+     * Neutral disk path: CameraX writes the JPEG straight to MediaStore and
+     * [bakeSavedJpeg] then makes it upright for the pose — usually without
+     * touching the pixels, because the HAL already rotated the buffer toward
+     * the app's portrait target. Mirrored or processed shots take
+     * [captureToMemory] instead.
+     */
     private fun captureToFile(
         capture: ImageCapture,
+        uprightRotation: Int,
         onSaved: (Uri) -> Unit,
         onError: (Exception) -> Unit,
     ) {
@@ -1112,8 +1349,7 @@ class CameraSession(
             override fun onImageSaved(outputFileResults: ImageCapture.OutputFileResults) {
                 val uri = outputFileResults.savedUri
                 if (uri != null) {
-                    fixUndefinedExifOrientation(uri)
-                    onSaved(uri)
+                    bakeSavedJpeg(uri, uprightRotation) { onSaved(uri) }
                 } else {
                     onError(IllegalStateException("CameraX returned no saved MediaStore URI"))
                 }
@@ -1125,9 +1361,57 @@ class CameraSession(
         })
     }
 
+    /**
+     * Makes a JPEG that CameraX already wrote upright for the capture pose.
+     *
+     * The buffer may already carry part of the rotation — the reference
+     * device's HAL bakes CameraX's requested rotation into the pixels — so
+     * the file's own Exif rotation tells how much is left: usually nothing
+     * from a portrait hold, in which case only the tag is aligned with the
+     * pose. When rotation is left, the pixels are re-encoded upright; if the
+     * frame is too large for that, the file keeps its pixels and gets the
+     * matching Exif rotation instead. Mirrored files are left to the camera's
+     * own Exif variants.
+     */
+    private fun bakeSavedJpeg(uri: Uri, uprightRotation: Int, onDone: () -> Unit) {
+        ioExecutor.execute {
+            runCatching {
+                val delivered = savedExifRotationDegrees(uri)
+                if (delivered < 0 || shouldMirrorCapture()) return@runCatching
+                val rotation = remainingRotation(uprightRotation, delivered)
+                if (rotation != 0) {
+                    val resolver = context.contentResolver
+                    val jpeg = resolver.openInputStream(uri)?.use { it.readBytes() }
+                    val encoded = jpeg?.let { bytes ->
+                        ByteArrayOutputStream().use { buffer ->
+                            val baked = JpegProcessor.process(
+                                bytes,
+                                ProcessingSettings.NATURAL,
+                                buffer,
+                                rotationDegrees = rotation,
+                            )
+                            if (baked) buffer.toByteArray() else null
+                        }
+                    }
+                    if (encoded != null) {
+                        val stream = resolver.openOutputStream(uri, "wt")
+                        if (stream != null) {
+                            stream.use { it.write(encoded) }
+                            writeLocationExif(uri)
+                            return@runCatching
+                        }
+                    }
+                }
+                writeCaptureOrientationTag(uri, rotation)
+            }
+            mainExecutor.execute(onDone)
+        }
+    }
+
     /** Processed path: decode, apply the intent, encode, write. */
     private fun captureToMemory(
         capture: ImageCapture,
+        uprightRotation: Int,
         settings: ProcessingSettings,
         onSaved: (Uri) -> Unit,
         onNote: (String) -> Unit,
@@ -1142,6 +1426,17 @@ class CameraSession(
             override fun onCaptureStarted() = playShutterSound()
 
             override fun onCaptureSuccess(image: ImageProxy) {
+                // The delivered buffer may already be part-rotated toward the
+                // app's portrait target; the delivered rotation metadata says
+                // how much is missing for the capture pose.
+                val deliveredRotation = image.imageInfo.rotationDegrees
+                if (Log.isLoggable(ORIENTATION_TAG, Log.DEBUG)) {
+                    Log.d(
+                        ORIENTATION_TAG,
+                        "in-memory ${image.width}x${image.height} " +
+                            "deliveredRotation=$deliveredRotation",
+                    )
+                }
                 val jpeg = image.toJpegBytes()
                 image.close()
                 if (jpeg == null) {
@@ -1149,6 +1444,7 @@ class CameraSession(
                     onError(IllegalStateException("Capture did not produce a JPEG frame"))
                     return
                 }
+                val rotation = remainingRotation(uprightRotation, deliveredRotation)
                 val resolver = context.contentResolver
                 ioExecutor.execute {
                     try {
@@ -1158,7 +1454,7 @@ class CameraSession(
                                 settings,
                                 out,
                                 mirrorHorizontal = shouldMirrorCapture(),
-                                rotationDegrees = uprightCaptureRotation(),
+                                rotationDegrees = rotation,
                                 watermark = watermarkOptions,
                                 location = captureLocation,
                             )
@@ -1168,8 +1464,9 @@ class CameraSession(
                             // low memory). Keep the shot, write the original.
                             resolver.openOutputStream(uri)?.use { it.write(jpeg) }
                                 ?: throw IllegalStateException("Could not write the capture")
-                            // Original HAL pixels went to disk: fix the tag too.
-                            fixUndefinedExifOrientation(uri)
+                            // Raw pipeline pixels went to disk: record the
+                            // pose rotation in the tag instead.
+                            writeCaptureOrientationTag(uri, rotation)
                             mainExecutor.execute {
                                 onNote("Saved without optional processing/watermark — frame too large")
                             }
@@ -1296,9 +1593,12 @@ class CameraSession(
             desiredCaptureMode()
         }
 
-        val preview = Preview.Builder().build().also {
-            it.setSurfaceProvider(previewView.surfaceProvider)
-        }
+        val preview = Preview.Builder()
+            .setTargetRotation(surfaceRotationForPose(poseDegrees))
+            .build().also {
+                it.setSurfaceProvider(previewView.surfaceProvider)
+            }
+        previewUseCase = preview
         val baseSelector = selectorForCamera(targetId)
         val desiredExtension = if (mode == SessionMode.VIDEO) {
             ExtensionMode.NONE
@@ -1346,13 +1646,18 @@ class CameraSession(
                 .build()
             val stillCapture = ImageCapture.Builder()
                 .setCaptureMode(ImageCapture.CAPTURE_MODE_MINIMIZE_LATENCY)
+                // Still images are for this portrait-locked UI: pin the target
+                // rotation so the pipeline's baked rotation is deterministic
+                // (see [remainingRotation]).
+                .setTargetRotation(Surface.ROTATION_0)
                 .build()
                 .also { image ->
-                    image.setCropAspectRatio(Rational(photoAspectRatio.numerator, photoAspectRatio.denominator))
+                    image.setCropAspectRatio(Rational(16, 9))
                     image.flashMode = ImageCapture.FLASH_MODE_OFF
                 }
             val videoBuilder = VideoCapture.Builder(recorder)
                 .setVideoStabilizationEnabled(stabilizationEnabled)
+                .setTargetRotation(surfaceRotationForPose(poseDegrees))
                 .setTargetFrameRate(Range(videoFrameRate.fps, videoFrameRate.fps))
                 .setMirrorMode(
                     if (mirrorCaptureEnabled) MirrorMode.MIRROR_MODE_ON_FRONT_ONLY
@@ -1372,7 +1677,10 @@ class CameraSession(
                 Camera2Interop.Extender(videoBuilder).setCaptureRequestOption(
                     CaptureRequest.NOISE_REDUCTION_MODE,
                     if (videoNoiseReductionEnabled) {
-                        CaptureRequest.NOISE_REDUCTION_MODE_HIGH_QUALITY
+                        // Prefer the real-time mode. Some HALs advertise
+                        // HIGH_QUALITY but stall or reject a video session
+                        // when it is enabled alongside the encoder.
+                        CaptureRequest.NOISE_REDUCTION_MODE_FAST
                     } else {
                         CaptureRequest.NOISE_REDUCTION_MODE_OFF
                     },
@@ -1397,9 +1705,34 @@ class CameraSession(
             })
             analysis = built
             useCases += built
+        } else if (mode == SessionMode.PANORAMA) {
+            // Panorama is driven by a continuous YUV stream, not a sequence
+            // of still captures. Keep this use case at a bounded, roughly
+            // 4:3 size; the converter downsamples each accepted frame before
+            // the CPU stitcher sees it.
+            val built = ImageAnalysis.Builder()
+                .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
+                .setTargetRotation(Surface.ROTATION_0)
+                .setResolutionSelector(
+                    ResolutionSelector.Builder()
+                        .setResolutionStrategy(
+                            ResolutionStrategy(
+                                Size(1440, 1080),
+                                ResolutionStrategy.FALLBACK_RULE_CLOSEST_HIGHER_THEN_LOWER,
+                            ),
+                        )
+                        .build(),
+                )
+                .build()
+            panoramaAnalysis = built
+            analysis = built
+            useCases += built
         } else {
             val captureBuilder = ImageCapture.Builder()
                 .setCaptureMode(captureMode)
+                // Portrait-locked UI: see the comment on the video still
+                // capture above.
+                .setTargetRotation(Surface.ROTATION_0)
                 .setOutputFormat(
                     if (rawEnabled && cameraFlags[targetId]?.raw == true) {
                         ImageCapture.OUTPUT_FORMAT_RAW_JPEG
@@ -1430,24 +1763,41 @@ class CameraSession(
         }
 
         provider.unbindAll()
-        val sessionConfig = SessionConfig.Builder(*useCases.toTypedArray()).apply {
-            if (lookEnabled) addEffect(ensureLookEffect())
-        }.build()
+        val useCaseGroup = buildUseCaseGroup(useCases)
         boundCamera = try {
-            provider.bindToLifecycle(lifecycleOwner, selector, sessionConfig)
+            provider.bindToLifecycle(lifecycleOwner, selector, useCaseGroup)
         } catch (t: Throwable) {
             activeExtensionMode = ExtensionMode.NONE
             var recovered: Camera? = null
-            if (analysis != null) {
+            if (analysis != null && mode == SessionMode.PANORAMA) {
+                // Some cameras cannot host Preview + a 1440x1080 YUV stream.
+                // Keep the viewfinder usable, but fail panorama honestly
+                // rather than falling through to a second failing bind.
+                provider.unbindAll()
+                val previewOnly = buildUseCaseGroup(listOf(preview))
+                recovered = runCatching {
+                    provider.bindToLifecycle(lifecycleOwner, selector, previewOnly)
+                }.getOrNull()
+                if (recovered != null) {
+                    analysis = null
+                    panoramaAnalysis = null
+                    runCatching {
+                        errorSink(
+                            IllegalStateException(
+                                "Panorama's live frame stream is not supported with this camera",
+                                t,
+                            ),
+                        )
+                    }
+                }
+            }
+            if (analysis != null && mode != SessionMode.PANORAMA) {
                 // Subject tracking adds an analysis stream. If this camera
                 // cannot host it alongside the current combination, keep the
                 // camera usable and turn tracking off instead of failing.
                 provider.unbindAll()
                 val withoutTracking = useCases.filterNot { it === analysis }
-                val trackingFreeConfig =
-                    SessionConfig.Builder(*withoutTracking.toTypedArray()).apply {
-                        if (lookEnabled) addEffect(ensureLookEffect())
-                    }.build()
+                val trackingFreeConfig = buildUseCaseGroup(withoutTracking)
                 recovered = runCatching {
                     provider.bindToLifecycle(lifecycleOwner, selector, trackingFreeConfig)
                 }.getOrNull()
@@ -1471,9 +1821,7 @@ class CameraSession(
                 // snapshot + video simultaneously. Preserve video by dropping
                 // only the optional snapshot use case.
                 provider.unbindAll()
-                val videoOnlyConfig = SessionConfig.Builder(preview, video).apply {
-                    if (lookEnabled) addEffect(ensureLookEffect())
-                }.build()
+                val videoOnlyConfig = buildUseCaseGroup(listOf(preview, video))
                 capture = null
                 analysis = null
                 videoSnapshotSupported = false
@@ -1485,7 +1833,7 @@ class CameraSession(
                     provider.bindToLifecycle(
                         lifecycleOwner,
                         CameraSelector.Builder().requireLensFacing(lensFacing).build(),
-                        videoOnlyConfig,
+                    videoOnlyConfig,
                     )
                 }
             }
@@ -1496,7 +1844,7 @@ class CameraSession(
                 recovered = provider.bindToLifecycle(
                     lifecycleOwner,
                     CameraSelector.Builder().requireLensFacing(lensFacing).build(),
-                    sessionConfig,
+                    useCaseGroup,
                 )
             }
             recovered
@@ -1512,6 +1860,7 @@ class CameraSession(
         imageCapture = capture
         videoCapture = video
         imageAnalysis = analysis
+        if (mode != SessionMode.PANORAMA || analysis == null) panoramaAnalysis = null
         appliedCaptureMode = captureMode
         if (torchEnabled && mode == SessionMode.VIDEO) {
             boundCamera?.cameraControl?.enableTorch(true)
@@ -1523,6 +1872,45 @@ class CameraSession(
     }
 
     /** Binds exactly one camera id (plus the facing), not "any camera facing". */
+    /**
+     * Binds preview and capture use cases to one shared crop rectangle. This
+     * is the WYSIWYG contract: the pixels inside the preview viewport are the
+     * pixels saved by ImageCapture (or encoded by VideoCapture), instead of a
+     * full-screen preview that silently crops far tighter than a 4:3 photo.
+     */
+    private fun buildUseCaseGroup(useCases: List<UseCase>): UseCaseGroup {
+        val baseAspect = if (mode == SessionMode.VIDEO) {
+            Rational(16, 9)
+        } else {
+            Rational(photoAspectRatio.numerator, photoAspectRatio.denominator)
+        }
+        // The selected ratio is expressed landscape-first. Rotate the viewport
+        // ratio with the phone so the fullscreen UI can show a correctly
+        // oriented, undistorted crop in either pose.
+        val viewportAspect = if (poseDegrees % 180 == 0) {
+            Rational(baseAspect.denominator, baseAspect.numerator)
+        } else {
+            baseAspect
+        }
+        val viewPort = ViewPort.Builder(viewportAspect, surfaceRotationForPose(poseDegrees))
+            .setScaleType(ViewPort.FILL_CENTER)
+            .build()
+        return UseCaseGroup.Builder()
+            .setViewPort(viewPort)
+            .apply {
+                useCases.forEach(::addUseCase)
+                if (lookEnabled) addEffect(ensureLookEffect())
+            }
+            .build()
+    }
+
+    private fun surfaceRotationForPose(pose: Int): Int = when (((pose % 360) + 360) % 360) {
+        90 -> Surface.ROTATION_90
+        180 -> Surface.ROTATION_180
+        270 -> Surface.ROTATION_270
+        else -> Surface.ROTATION_0
+    }
+
     private fun selectorForCamera(cameraId: String?): CameraSelector {
         val builder = CameraSelector.Builder().requireLensFacing(lensFacing)
         if (cameraId != null) {
@@ -1546,6 +1934,23 @@ class CameraSession(
     private fun planLenses(provider: ProcessCameraProvider): LensLayout {
         val flags = mutableMapOf<String, CameraFlags>()
         val specs = mutableListOf<LensSpec>()
+        val cameraManager = context.getSystemService(Context.CAMERA_SERVICE) as CameraManager
+        if (Log.isLoggable(LENS_PLAN_TAG, Log.DEBUG)) {
+            val allCameras = cameraManager.cameraIdList.joinToString { id ->
+                runCatching {
+                    val characteristics = cameraManager.getCameraCharacteristics(id)
+                    val facing = characteristics.get(CameraCharacteristics.LENS_FACING)
+                    val focal = characteristics.get(CameraCharacteristics.LENS_INFO_AVAILABLE_FOCAL_LENGTHS)
+                        ?.joinToString()
+                    val size = characteristics.get(CameraCharacteristics.SENSOR_INFO_PHYSICAL_SIZE)
+                    val pixels = characteristics.get(CameraCharacteristics.SENSOR_INFO_PIXEL_ARRAY_SIZE)
+                    val physicalIds = characteristics.physicalCameraIds
+                    "$id:facing=$facing,focal=$focal,sensor=${size?.width}x${size?.height}," +
+                        "pixels=${pixels?.width}x${pixels?.height},physical=$physicalIds"
+                }.getOrDefault("$id:characteristics-unavailable")
+            }
+            Log.d(LENS_PLAN_TAG, "CameraManager IDs: $allCameras")
+        }
         for (info in provider.availableCameraInfos) {
             val camera2 = Camera2CameraInfo.from(info)
             if (camera2.getCameraCharacteristic(CameraCharacteristics.LENS_FACING) != lensFacing) {
@@ -1571,6 +1976,11 @@ class CameraSession(
                 raw = capabilities.contains(
                     CameraCharacteristics.REQUEST_AVAILABLE_CAPABILITIES_RAW,
                 ),
+                // Guaranteed by the API; 90 is the phone-camera default and what
+                // the reference device reports for its back cameras.
+                sensorOrientation = camera2.getCameraCharacteristic(
+                    CameraCharacteristics.SENSOR_ORIENTATION,
+                ) ?: 90,
                 evStep = camera2.getCameraCharacteristic(
                     CameraCharacteristics.CONTROL_AE_COMPENSATION_STEP,
                 )?.toFloat() ?: DEFAULT_EV_STEP,
@@ -1583,7 +1993,7 @@ class CameraSession(
                 )?.contains(android.hardware.camera2.CameraMetadata.LENS_OPTICAL_STABILIZATION_MODE_ON) == true,
                 noiseReduction = camera2.getCameraCharacteristic(
                     CameraCharacteristics.NOISE_REDUCTION_AVAILABLE_NOISE_REDUCTION_MODES,
-                )?.contains(CaptureRequest.NOISE_REDUCTION_MODE_HIGH_QUALITY) == true,
+                )?.contains(CaptureRequest.NOISE_REDUCTION_MODE_FAST) == true,
             )
             specs += LensSpec(
                 cameraId = camera2.cameraId,
@@ -1597,10 +2007,39 @@ class CameraSession(
                         CameraCharacteristics.SCALER_AVAILABLE_MAX_DIGITAL_ZOOM,
                     )?.toFloat()?.coerceAtLeast(1f) ?: 1f,
             )
+            if (Log.isLoggable(LENS_PLAN_TAG, Log.DEBUG)) {
+                val physicalIds = runCatching {
+                    cameraManager.getCameraCharacteristics(camera2.cameraId).physicalCameraIds
+                }.getOrDefault(emptySet())
+                val physicalSummary = physicalIds.joinToString { physicalId ->
+                    runCatching {
+                        val physical = cameraManager.getCameraCharacteristics(physicalId)
+                        val focal = physical.get(CameraCharacteristics.LENS_INFO_AVAILABLE_FOCAL_LENGTHS)
+                            ?.joinToString()
+                        val physicalSensor = physical.get(CameraCharacteristics.SENSOR_INFO_PHYSICAL_SIZE)
+                        val physicalPixels = physical.get(CameraCharacteristics.SENSOR_INFO_PIXEL_ARRAY_SIZE)
+                        "$physicalId:focal=$focal,sensor=${physicalSensor?.width}x${physicalSensor?.height}," +
+                            "pixels=${physicalPixels?.width}x${physicalPixels?.height}"
+                    }.getOrDefault("$physicalId:characteristics-unavailable")
+                }
+                Log.d(LENS_PLAN_TAG, "camera=${camera2.cameraId} physicalIds=$physicalIds $physicalSummary")
+            }
         }
         cameraFlags = flags
         if (specs.isEmpty()) return LensPlan.single("0", minZoom = 1f, maxZoom = 1f)
-        return LensPlan.build(specs)
+        val layout = LensPlan.build(specs)
+        if (Log.isLoggable(LENS_PLAN_TAG, Log.DEBUG)) {
+            Log.d(
+                LENS_PLAN_TAG,
+                "managerCameras=${cameraManager.cameraIdList.joinToString()} reference=${layout.referenceCameraId} " +
+                    "stops=${layout.stops} optical=${layout.opticalStops} lenses=" +
+                    specs.joinToString { spec ->
+                        "${spec.cameraId}:focals=${spec.focalsMm},sensor=${spec.sensorWidthMm}x${spec.sensorHeightMm}," +
+                            "pixels=${spec.pixelCount},zoom=${spec.minZoom}..${spec.maxZoom}"
+                    },
+            )
+        }
+        return layout
     }
 
     private fun videoFrameRateOptions(
@@ -1695,6 +2134,11 @@ class CameraSession(
 
         val published = SessionCapabilities(
                 zoomStops = layout?.stops ?: listOf(1f),
+                opticalZoomStops = layout?.let { currentLayout ->
+                    (currentLayout.lenses.map { it.baseStop } + currentLayout.opticalStops)
+                        .distinct()
+                        .sorted()
+                } ?: listOf(1f),
                 minDisplayedZoom = layout?.minDisplayedZoom
                     ?: liveZoom?.minZoomRatio
                     ?: 1f,
@@ -1791,21 +2235,50 @@ class CameraSession(
 
     /**
      * Clockwise rotation, in degrees, that turns a raw capture of the current
-     * lens into an upright image.
+     * lens into an upright image for the pose the phone is being held in.
      *
-     * Calibrated against real captures on the reference device (Nothing A001,
-     * MediaTek HAL): technically/textually upright photos taken in portrait
-     * come back as landscape buffers that need 270° clockwise, not the 90°
-     * the sensor metadata alone would suggest. The app is portrait-locked, so
-     * no display-rotation term is needed. Re-verify with a text target when
-     * testing on another device or lens.
+     * The pose comes from the orientation sensors (rounded to 0/90/180/270)
+     * and the camera's reported `SENSOR_ORIENTATION`; the app is
+     * portrait-locked, so there is no display-rotation term. [CaptureOrientation]
+     * holds the math, and the pose keeps updating while the session is bound,
+     * so pictures taken in landscape or upside down are saved upright too.
      */
-    private fun uprightCaptureRotation(): Int = when (lensFacing) {
-        CameraSelector.LENS_FACING_FRONT -> 90
-        else -> 270
+    private fun uprightCaptureRotation(): Int {
+        val sensorOrientation = sensorOrientationDegrees()
+        val rotation = CaptureOrientation.captureRotationDegrees(poseDegrees, sensorOrientation)
+        if (Log.isLoggable(ORIENTATION_TAG, Log.DEBUG)) {
+            Log.d(
+                ORIENTATION_TAG,
+                "pose=$poseDegrees sensorOrientation=$sensorOrientation rotation=$rotation",
+            )
+        }
+        return rotation
     }
 
-    private fun exifOrientationForCapture(): Int = when (uprightCaptureRotation()) {
+    /** The selected camera's reported `SENSOR_ORIENTATION`. */
+    private fun sensorOrientationDegrees(): Int =
+        selectedCameraId?.let { cameraFlags[it]?.sensorOrientation } ?: 90
+
+    /**
+     * Rotation still owed to a delivered capture: [uprightRotation] minus the
+     * part the pipeline already applied. The in-memory path turns the buffer
+     * toward the app's portrait target by `sensor - delivered` degrees (the
+     * HAL bakes the requested rotation into the pixels); the delivered
+     * rotation metadata reports the remainder, which still has to be applied
+     * on top of those pixels.
+     */
+    private fun remainingRotation(uprightRotation: Int, deliveredRotationDegrees: Int): Int =
+        CaptureOrientation.remainingRotationDegrees(
+            uprightRotation,
+            CaptureOrientation.pipelineAppliedRotationDegrees(
+                sensorOrientationDegrees(),
+                deliveredRotationDegrees,
+            ),
+        )
+
+    private fun exifOrientationFor(rotationDegrees: Int): Int = when (
+        ((rotationDegrees % 360) + 360) % 360
+    ) {
         90 -> ExifInterface.ORIENTATION_ROTATE_90
         180 -> ExifInterface.ORIENTATION_ROTATE_180
         270 -> ExifInterface.ORIENTATION_ROTATE_270
@@ -1813,25 +2286,51 @@ class CameraSession(
     }
 
     /**
-     * The HAL leaves JPEGs saved straight through CameraX with an undefined
-     * (0) orientation tag, so every gallery shows them sideways. Replace it
-     * with the calibrated rotation, but only when it is missing/invalid —
-     * never fight a correct value the pipeline already wrote. Call only for
-     * files whose pixels were NOT rotated in software.
+     * The rotation encoded in a saved JPEG's Exif orientation tag, in
+     * clockwise degrees (0 when absent or undefined). Returns -1 for the
+     * mirrored variants: those files are left exactly as the camera wrote
+     * them.
      */
-    private fun fixUndefinedExifOrientation(uri: Uri) {
+    private fun savedExifRotationDegrees(uri: Uri): Int = runCatching {
+        context.contentResolver.openFileDescriptor(uri, "rw")?.use { descriptor ->
+            val exif = ExifInterface(descriptor.fileDescriptor)
+            when (
+                exif.getAttributeInt(
+                    ExifInterface.TAG_ORIENTATION,
+                    ExifInterface.ORIENTATION_UNDEFINED,
+                )
+            ) {
+                ExifInterface.ORIENTATION_ROTATE_90 -> 90
+                ExifInterface.ORIENTATION_ROTATE_180 -> 180
+                ExifInterface.ORIENTATION_ROTATE_270 -> 270
+                ExifInterface.ORIENTATION_FLIP_HORIZONTAL,
+                ExifInterface.ORIENTATION_FLIP_VERTICAL,
+                ExifInterface.ORIENTATION_TRANSPOSE,
+                ExifInterface.ORIENTATION_TRANSVERSE,
+                -> -1
+                else -> 0
+            }
+        }
+    }.getOrNull() ?: 0
+
+    /**
+     * Writes the Exif orientation tag that describes how much a saved JPEG's
+     * own pixels still owe to the capture pose. Unlike a plain repair, this
+     * replaces any value the pipeline wrote: the HAL leaves the tag undefined
+     * when it bakes the rotation into the pixels, and CameraX's value would
+     * describe the app's portrait target rather than how the phone was held.
+     */
+    private fun writeCaptureOrientationTag(uri: Uri, rotationDegrees: Int) {
         runCatching {
             context.contentResolver.openFileDescriptor(uri, "rw")?.use { descriptor ->
                 val exif = ExifInterface(descriptor.fileDescriptor)
+                val target = exifOrientationFor(rotationDegrees)
                 val current = exif.getAttributeInt(
                     ExifInterface.TAG_ORIENTATION,
                     ExifInterface.ORIENTATION_UNDEFINED,
                 )
-                if (current !in 1..8) {
-                    exif.setAttribute(
-                        ExifInterface.TAG_ORIENTATION,
-                        exifOrientationForCapture().toString(),
-                    )
+                if (current != target) {
+                    exif.setAttribute(ExifInterface.TAG_ORIENTATION, target.toString())
                     exif.saveAttributes()
                 }
             }
@@ -1866,6 +2365,7 @@ class CameraSession(
 private data class CameraFlags(
     val zeroShutterLag: Boolean,
     val raw: Boolean,
+    val sensorOrientation: Int,
     val evStep: Float,
     val maxJpegPixels: Long,
     val opticalStabilization: Boolean,

@@ -25,8 +25,14 @@ import java.io.OutputStream
  */
 object JpegProcessor {
 
-    /** Pixel math uses full-size integer buffers, so keep its ceiling conservative. */
-    private const val MAX_COLOR_PROCESSING_PIXELS = 8_000_000L
+    /** Ceiling for software color processing; larger stills are processed in tiles. */
+    private const val MAX_COLOR_PROCESSING_PIXELS = 16_000_000L
+
+    /** Below this, the simpler full-frame ImageProcessor path is cheaper. */
+    private const val FULL_FRAME_COLOR_PIXELS = 8_000_000L
+
+    /** Rows per tile when a normal 12 MP still would exceed the full-frame budget. */
+    private const val COLOR_PROCESSING_TILE_ROWS = 128
 
     /** A watermark-only Canvas pass needs just the bitmap, so it can cover 12 MP JPEGs. */
     private const val MAX_BITMAP_ONLY_PIXELS = 24_000_000L
@@ -74,10 +80,35 @@ object JpegProcessor {
             if (width.toLong() * height.toLong() > maxPixels) return false
 
             if (requiresColorPixels) {
-                val pixels = IntArray(width * height)
-                bitmap.getPixels(pixels, 0, width, 0, 0, width, height)
-                ImageProcessor.apply(pixels, width, height, settings)
-                bitmap.setPixels(pixels, 0, width, 0, 0, width, height)
+                if (width.toLong() * height <= FULL_FRAME_COLOR_PIXELS) {
+                    val pixels = IntArray(width * height)
+                    bitmap.getPixels(pixels, 0, width, 0, 0, width, height)
+                    ImageProcessor.apply(pixels, width, height, settings)
+                    bitmap.setPixels(pixels, 0, width, 0, 0, width, height)
+                } else {
+                    // Read each tile plus its spatial-filter halo from an
+                    // immutable source bitmap, and write only the core rows to
+                    // the output. This keeps previewed sharpening/looks from
+                    // silently disappearing on the device's standard 12 MP
+                    // stills, without allocating several full-frame arrays.
+                    val source = bitmap.copy(Bitmap.Config.ARGB_8888, false) ?: return false
+                    try {
+                        ImageProcessor.applyTiled(
+                            width = width,
+                            height = height,
+                            settings = settings,
+                            tileRows = COLOR_PROCESSING_TILE_ROWS,
+                            readRow = { row, pixels, offset ->
+                                source.getPixels(pixels, offset, width, 0, row, width, 1)
+                            },
+                            writeRows = { firstRow, rowCount, pixels, offset ->
+                                bitmap.setPixels(pixels, offset, width, 0, firstRow, width, rowCount)
+                            },
+                        )
+                    } finally {
+                        source.recycle()
+                    }
+                }
             }
             WatermarkRenderer.draw(bitmap, watermark, location)
 

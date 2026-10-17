@@ -12,13 +12,13 @@ Current release: **v1.2.0** (`versionCode 5`), debug-signed, `minSdk 33` (Androi
 
 | Area | State |
 | --- | --- |
-| Still capture pipeline (ZSL, queueing, background post-processing) | Done, device-verified |
-| Video pipeline (Recorder, stabilization, OIS, snapshots, mute) | Done, device-verified |
-| Modes: Photo, Video, Portrait, Beauty, Night, Panorama, Macro, QR, Slow motion, Time lapse, Expert | Done; where an OEM pipeline is required (see below) a bounded clean-room fallback runs |
+| Still capture pipeline (ZSL, queueing, background post-processing) | Previously device-verified; pose-aware orientation change awaits re-test |
+| Video pipeline (Recorder, stabilization, OIS, snapshots, mute) | Previously device-verified; NR and Camera2 recorder changes await re-test |
+| Modes: Photo, Video, Portrait, Beauty, Night, Panorama, Macro, QR, Slow motion, Time lapse, Expert | Implemented; live panorama / Camera2 recorder changes await device verification |
 | Expert manual controls (ISO / shutter / focus / EV / WB) | Done, device-verified |
 | Subject tracking (photo + video) | Done, device-verified (added in v1.2.0) |
 | Gallery hand-off and in-app gallery | Done, device-verified |
-| 188 JVM unit tests | Green |
+| 213 JVM unit tests | Green |
 
 Feature-by-feature status against the original-app inventory, including what is a clean-room substitute rather than a reproduction, is tracked in [notes/FEATURE-COVERAGE.md](notes/FEATURE-COVERAGE.md); device checks are logged in [notes/PLAN-v1.1.md](notes/PLAN-v1.1.md).
 
@@ -39,10 +39,10 @@ The carousel ships eleven entries: **PHOTO, PORTRAIT, BEAUTY, NIGHT, PANORAMA, M
 - **PORTRAIT** — CameraX BOKEH extension where the device advertises it (real depth lens blur); otherwise a documented software ellipse blur with an adjustable strength slider.
 - **BEAUTY** — CameraX FACE_RETOUCH extension when available; otherwise bounded software skin smoothing.
 - **NIGHT** — CameraX NIGHT extension when advertised; otherwise a bounded 4-frame alignment/merge fallback.
-- **PANORAMA** — sweep capture with frame counter and direction guide, stitched on-device (translation-only correlation + feathering).
+- **PANORAMA** — continuous YUV frame sweep with a gyro-driven direction/level guide and a progressive stitched strip; clean-room multi-band horizontal alignment + feathering.
 - **MACRO** — Camera2 macro AF mode when the lens reports it.
 - **QR** — local ZXing QR analyzer with open/copy actions for the result.
-- **SLO-MO / TIME-LAPSE** — Camera2 constrained high-speed recording and MediaRecorder interval capture (see below).
+- **SLO-MO / TIME-LAPSE** — Camera2 constrained high-speed recording and MediaRecorder interval capture (see below). Slo-mo rates are hardware-reported; the Camera2 time-lapse path is bounded to FHD-or-smaller for reliable prepare/record.
 - **EXPERT** — manual ISO, shutter, focus, EV and white balance on top of the standard pipeline.
 
 ### Photo
@@ -70,33 +70,33 @@ A clean-room tracking autofocus for both photo modes and video:
 
 ### Zoom & lenses
 
-- Zoom stops derived from the physical focal lengths of the device's lenses, applied through zoom ratios (no session rebind — video keeps recording across a lens switch).
-- Pinch-to-zoom with honest hardware-range clamping, plus per-mode caps (night up to 30x, portrait/macro 4x, slow motion 2x, time lapse 10x, panorama 1x).
+- Zoom stops derived from lenses exposed by the public CameraX/Camera2 API. On devices exposing only one public back camera, stops above 1x are digital crops; hidden OEM physical lenses are not claimed as available.
+- Pinch-to-zoom with honest hardware-range clamping and a shared CameraX capture viewport, so the framing shown is the crop saved to the file; per-mode caps still apply.
 - Front/back switch that keeps mode and preferences.
 
 ### Video
 
 - Quality (HD / 1080p / 4K) and frame-rate (30/60 fps) requests, validated against device support on bind.
 - Stabilization toggle, capability-detected: preview stabilization → standard video stabilization → optical; the estimated crop is shown as a labelled overlay so the loss is visible.
-- Action-mode shortcut (60 fps + stabilization), independent OIS request where the lens supports it, and high-quality noise-reduction (3DNR) requests where advertised.
+- Action-mode shortcut (60 fps + stabilization), independent OIS request where the lens supports it, and Camera2 real-time noise reduction where `FAST` is advertised. This is not temporal 3DNR.
 - Microphone mute, torch, record-location geotagging, front-camera mirror preference.
 - Video snapshot: a concurrent still capture while recording, with a video-only fallback on devices that cannot host both.
 - Recording keeps running across lens/zoom switching.
 
 ### Slow motion & Time lapse
 
-- Slow motion: Camera2 constrained high-speed session, picking the device's advertised high-speed rates (1080p up to what the HAL reports).
-- Time lapse: MediaRecorder interval capture with speed choices from X15 up to X960.
+- Slow motion: Camera2 constrained high-speed session, using native HAL-advertised stream dimensions and the device's advertised rate endpoints.
+- Time lapse: MediaRecorder interval capture with speed choices from X15 up to X960; playback orientation and cadence remain device-test items.
 - Both modes are hardware-dependent and honestly capability-gated: only device-supported rates/sizes are offered.
 
 ### Panorama
 
-- Sweep capture with a progress counter and direction hint; frames are stitched on-device with a translation model and feathered seams.
-- Bounded and downsampled by design — it is a clean-room stitcher, not an OEM-grade engine, and the UI notes say so.
+- Continuous ImageAnalysis sweep with a gyro-driven progress/level/speed guide and a live stitched preview strip.
+- Frames are bounded/downsampled and aligned with three-band horizontal correlation and feathered seams; rotation correction and OEM-grade registration are intentionally absent.
 
 ### Portrait & Beauty
 
-- Portrait: OEM bokeh extension when available, otherwise adjustable software background blur (no depth map is implied).
+- Portrait: OEM bokeh extension when available; otherwise a face-guided software blur mask (still no depth map or per-pixel segmentation).
 - Beauty: OEM face-retouch extension when available, otherwise bounded smoothing controlled by the processing sheet.
 - Both work with the device's normal lens set and respect the per-mode zoom cap (4x).
 
@@ -154,7 +154,7 @@ A clean-room tracking autofocus for both photo modes and video:
 
 ## Honest validation notes
 
-- Device-verified on Nothing Phone (A001), Android 16: preview, still capture (with EXIF-orientation repair), ZSL, gallery hand-off, tracking (photo/video/front camera), processing sheet, expert controls and the camera-settings flows.
+- Device-verified on Nothing Phone (A001), Android 16: preview, still capture (pose-aware uprighting), ZSL, gallery hand-off, tracking (photo/video/front camera), processing sheet, expert controls and the camera-settings flows.
 - Feature rows marked 🟡 in [notes/FEATURE-COVERAGE.md](notes/FEATURE-COVERAGE.md) are implemented but depend on hardware/provider behaviour and are not guaranteed on every device (slow motion rates, time-lapse cadence, extensions, RAW output, stabilization).
 - Vendor-only features that this project intentionally does **not** reproduce: beauty-video pipelines, AI scene detection, gender estimate, glyph/LED flash, Morpho/Tetras LUT packs, motion photo, Ultra HDR/Ultra XDR, 50 MP remosaic, super-resolution, TurboNight, tele-macro, depth-segmentation portrait and OEM panorama engines. Clean-room substitutes are labelled as such in the app and in the coverage matrix; no parity is claimed for them.
 
@@ -167,7 +167,7 @@ Requirements:
 
 ```bash
 ./gradlew :app:assembleDebug       # debug APK
-./gradlew :app:testDebugUnitTest   # JVM unit tests (188)
+./gradlew :app:testDebugUnitTest   # JVM unit tests (198)
 ```
 
 `local.properties` (git-ignored) points at your SDK:

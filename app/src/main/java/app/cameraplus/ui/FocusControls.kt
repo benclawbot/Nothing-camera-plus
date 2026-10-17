@@ -7,6 +7,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -147,9 +148,7 @@ fun BrightnessSlider(
         if (indexRange.first <= 0 && indexRange.last >= 0) {
             Box(
                 modifier = Modifier
-                    .padding(
-                        top = trackTopFor(0f, indexRange, steps, density) - NEUTRAL_TICK_HALF,
-                    )
+                    .offset(y = trackTopFor(0f, indexRange, steps, density) - NEUTRAL_TICK_HALF)
                     .width(11.dp)
                     .height(NEUTRAL_TICK_HALF * 2)
                     .background(Color(0x99FFFFFF)),
@@ -157,9 +156,7 @@ fun BrightnessSlider(
         }
         Box(
             modifier = Modifier
-                .padding(
-                    top = trackTopFor(index.toFloat(), indexRange, steps, density) - KNOB_HALF,
-                )
+                .offset(y = trackTopFor(index.toFloat(), indexRange, steps, density) - KNOB_HALF)
                 .size(KNOB_HALF * 2)
                 .clip(CircleShape)
                 .background(White),

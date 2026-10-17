@@ -164,7 +164,13 @@ class RecorderPlanTest {
     @Test
     fun supportedRatesUseTheTopOfAVariableBracket() {
         // 120..240 can be driven at up to 240, so 240 is the rate to offer.
-        assertEquals(listOf(240), RecorderPlan.supportedSlowMotionRates(listOf(120..240)))
+        assertEquals(listOf(120, 240), RecorderPlan.supportedSlowMotionRates(listOf(120..240)))
+    }
+
+    @Test
+    fun supportedRatesDoNotOfferNormalPlaybackAsSlowMotion() {
+        assertEquals(listOf(240), RecorderPlan.supportedSlowMotionRates(listOf(30..240)))
+        assertEquals(emptyList<Int>(), RecorderPlan.supportedSlowMotionRates(listOf(30..30)))
     }
 
     @Test

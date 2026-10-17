@@ -81,8 +81,10 @@ data class HighSpeedOption(
         fpsRanges.filter { it.last >= 1 && fps in it }
             .minWithOrNull(compareBy({ abs(it.last - fps) }, { it.last - it.first }))
 
-    /** Every capture rate this size advertises, ascending and without repeats. */
-    fun nominalRates(): List<Int> = fpsRanges.mapNotNull { if (it.last >= 1) it.last else null }
+    /** Fixed rates or range endpoints this size advertises, ascending and unique. */
+    fun nominalRates(): List<Int> = fpsRanges
+        .filter { it.first >= 1 && it.last >= it.first }
+        .flatMap { listOf(it.first, it.last) }
         .distinct()
         .sorted()
 }
@@ -188,13 +190,18 @@ object RecorderPlan {
      * Capture rates offered by the high-speed ranges of **one** resolution,
      * ascending and without repeats.
      *
-     * A bracket is advertised by its top end — `240..240` means 240 fps, and a
-     * variable `120..240` can be driven at up to 240 — so that is the number
-     * that becomes a menu entry. Degenerate/empty brackets (possible from a
+     * Fixed brackets contribute their rate; variable brackets contribute
+     * both endpoints (`120..240` makes 120 and 240 menu entries). Other rates
+     * inside a range are available to plans but are not shown by this picker.
+     * Rates at or below normal 30 fps playback are omitted: they are not slow
+     * motion and would produce a normal-speed clip in this mode.
+     * Degenerate/empty brackets (possible from a
      * misbehaving HAL, `1..0`) are dropped rather than reported as 0 fps.
      */
     fun supportedSlowMotionRates(ranges: List<IntRange>): List<Int> =
-        ranges.mapNotNull { range -> if (range.last >= 1) range.last else null }
+        ranges.filter { it.first >= 1 && it.last >= it.first }
+            .flatMap { listOf(it.first, it.last) }
+            .filter { it > DEFAULT_PLAYBACK_FPS }
             .distinct()
             .sorted()
 

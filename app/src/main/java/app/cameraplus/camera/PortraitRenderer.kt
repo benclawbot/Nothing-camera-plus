@@ -139,6 +139,35 @@ object PortraitRenderer {
     }
 
     /**
+     * A portrait-shaped in-focus region anchored on a detected face rather
+     * than an image-centred guess. [faceCenterX] / [faceCenterY] and
+     * [eyeDistance] are in pixels in the supplied frame. This is still a
+     * face-guided blur mask, **not depth**: it keeps the detected face and a
+     * rough head/shoulders region sharp, but cannot separate hair, hands or
+     * foreground objects from the background.
+     */
+    fun faceGuidedShape(
+        width: Int,
+        height: Int,
+        faceCenterX: Float,
+        faceCenterY: Float,
+        eyeDistance: Float,
+        level: Float,
+    ): BokehShape {
+        require(width > 0 && height > 0) { "image must not be empty" }
+        val t = level.coerceIn(0f, 1f)
+        val eyeSpan = eyeDistance.coerceAtLeast(1f)
+        val subjectScale = 1f + 0.30f * t
+        return BokehShape(
+            centerXRatio = (faceCenterX / width).coerceIn(0f, 1f),
+            centerYRatio = ((faceCenterY + eyeSpan * 1.25f * subjectScale) / height).coerceIn(0f, 1f),
+            radiusXRatio = (eyeSpan * 2.25f * subjectScale / width).coerceIn(0.08f, 0.49f),
+            radiusYRatio = (eyeSpan * 3.35f * subjectScale / height).coerceIn(0.10f, 0.58f),
+            featherRatio = 0.28f - 0.14f * t,
+        )
+    }
+
+    /**
      * How much of the blurred frame to mix in at (`x`, `y`): 0 inside the
      * subject ellipse, 1 outside the feather band, smoothstep between.
      *

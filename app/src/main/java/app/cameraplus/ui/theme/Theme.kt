@@ -10,7 +10,9 @@ import androidx.compose.ui.graphics.Color
 val Black = Color(0xFF000000)
 val OffBlack = Color(0xFF121212)
 val White = Color(0xFFFFFFFF)
-val DimWhite = Color(0xFFB3B3B3)
+// Interface copy is intentionally monochrome with no mid-grey text: every
+// label remains legible over a moving camera preview.
+val DimWhite = White
 val FaintWhite = Color(0x33FFFFFF)
 
 private val MonochromeColors = darkColorScheme(

@@ -3,6 +3,7 @@ package app.cameraplus.camera
 import kotlin.math.abs
 import kotlin.math.max
 import kotlin.math.min
+import kotlin.math.roundToInt
 import kotlin.math.sqrt
 
 /**
@@ -80,6 +81,9 @@ object PanoramaStitcher {
     /** Shifts within this many steps of the winner are treated as the same peak. */
     private const val NEIGHBOUR_HOOD = 2
 
+    /** Vertical subframes used to reject matches dominated by sky or ground. */
+    private const val BAND_COUNT = 3
+
     /** Columns that must overlap before a correlation is trusted at all. */
     private const val MIN_SAMPLES = 8
 
@@ -129,9 +133,9 @@ object PanoramaStitcher {
         }
         val limit = min(maxShift, width - 1)
         if (limit <= 0) return 0
-        return bestShift(
-            columnLuminance(previous, width, height),
-            columnLuminance(current, width, height),
+        return bestShiftAcrossBands(
+            columnLuminanceBands(previous, width, height),
+            columnLuminanceBands(current, width, height),
             limit,
         )
     }
@@ -174,8 +178,8 @@ object PanoramaStitcher {
         val usable = frames.filter { it.size >= width * height }
         if (usable.size < 2) return null
 
-        val projections = usable.map { columnLuminance(it, width, height) }
-        if (stdDev(projections[0]) < MIN_COLUMN_CONTRAST) return null
+        val projections = usable.map { columnLuminanceBands(it, width, height) }
+        if (projections[0].none { stdDev(it) >= MIN_COLUMN_CONTRAST }) return null
 
         val limit = min(maxShift, width - 1)
         val maxOffset = (width * (1f - MIN_OVERLAP_FRACTION)).toInt()
@@ -188,7 +192,7 @@ object PanoramaStitcher {
         placed += reference
 
         for (index in 1 until usable.size) {
-            val shift = bestShift(projections[reference], projections[index], limit)
+            val shift = bestShiftAcrossBands(projections[reference], projections[index], limit)
             val plausible = shift != 0 &&
                 abs(shift) <= maxOffset &&
                 (direction == 0 || sign(shift) == direction)
@@ -236,26 +240,49 @@ object PanoramaStitcher {
     }
 
     /**
-     * Mean luminance per column, built once per frame.
-     *
-     * Rec. 601 weights on the packed channels, summed into a float column and
-     * averaged over the rows at the end.
+     * Mean luminance projections from three vertical bands, built once per
+     * frame. Separate bands prevent a blank sky/ground region or parallax in
+     * one part of the view from dragging the whole-frame column average to a
+     * false shift. Alignment takes the median of confident band matches.
      */
-    private fun columnLuminance(pixels: IntArray, width: Int, height: Int): FloatArray {
-        val columns = FloatArray(width)
-        var index = 0
-        for (y in 0 until height) {
-            for (x in 0 until width) {
-                val pixel = pixels[index++]
-                val r = (pixel ushr 16) and 0xFF
-                val g = (pixel ushr 8) and 0xFF
-                val b = pixel and 0xFF
-                columns[x] += ((77 * r + 150 * g + 29 * b) ushr 8).toFloat()
+    private fun columnLuminanceBands(pixels: IntArray, width: Int, height: Int): List<FloatArray> {
+        val bandCount = min(BAND_COUNT, height)
+        return (0 until bandCount).map { band ->
+            val firstRow = band * height / bandCount
+            val lastRow = (band + 1) * height / bandCount
+            val bandHeight = (lastRow - firstRow).coerceAtLeast(1)
+            val columns = FloatArray(width)
+            for (y in firstRow until lastRow) {
+                var index = y * width
+                for (x in 0 until width) {
+                    val pixel = pixels[index++]
+                    val r = (pixel ushr 16) and 0xFF
+                    val g = (pixel ushr 8) and 0xFF
+                    val b = pixel and 0xFF
+                    columns[x] += ((77 * r + 150 * g + 29 * b) ushr 8).toFloat()
+                }
             }
+            val rows = 1f / bandHeight
+            for (x in 0 until width) columns[x] *= rows
+            columns
         }
-        val rows = 1f / height
-        for (x in 0 until width) columns[x] *= rows
-        return columns
+    }
+
+    private fun bestShiftAcrossBands(
+        previous: List<FloatArray>,
+        current: List<FloatArray>,
+        maxShift: Int,
+    ): Int {
+        val matches = previous.indices.mapNotNull { band ->
+            bestShift(previous[band], current[band], maxShift).takeIf { it != 0 }
+        }.sorted()
+        if (matches.isEmpty()) return 0
+        val middle = matches.size / 2
+        return if (matches.size % 2 == 1) {
+            matches[middle]
+        } else {
+            ((matches[middle - 1] + matches[middle]) / 2f).roundToInt()
+        }
     }
 
     /**

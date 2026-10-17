@@ -34,6 +34,7 @@ class LookParameters {
     @Volatile var skinSmoothing: Float = 0f
     @Volatile var sharpening: Float = 0f
     @Volatile var filter: Int = 0
+    @Volatile var portraitBokeh: Float = 0f
 
     fun update(settings: ProcessingSettings) {
         hdr = settings.hdr
@@ -44,7 +45,8 @@ class LookParameters {
     }
 
     fun isNeutral(): Boolean =
-        hdr == 0f && noiseReduction == 0f && skinSmoothing == 0f && sharpening == 0f && filter == 0
+        hdr == 0f && noiseReduction == 0f && skinSmoothing == 0f && sharpening == 0f &&
+            filter == 0 && portraitBokeh == 0f
 }
 
 /** Error hand-off between the GL thread and the session. */
@@ -128,6 +130,7 @@ private class LookRenderer(
     private var uniformSkin = -1
     private var uniformSharpen = -1
     private var uniformFilter = -1
+    private var uniformPortraitBokeh = -1
 
     private var textureId = 0
     private var inputTexture: SurfaceTexture? = null
@@ -273,6 +276,7 @@ private class LookRenderer(
             GLES20.glUniform1f(uniformSkin, parameters.skinSmoothing)
             GLES20.glUniform1f(uniformSharpen, parameters.sharpening)
             GLES20.glUniform1f(uniformFilter, parameters.filter.toFloat())
+            GLES20.glUniform1f(uniformPortraitBokeh, parameters.portraitBokeh)
 
             GLES20.glActiveTexture(GLES20.GL_TEXTURE0)
             GLES20.glBindTexture(GLES11Ext.GL_TEXTURE_EXTERNAL_OES, textureId)
@@ -378,6 +382,7 @@ private class LookRenderer(
         uniformSkin = GLES20.glGetUniformLocation(program, "uSkin")
         uniformSharpen = GLES20.glGetUniformLocation(program, "uSharpen")
         uniformFilter = GLES20.glGetUniformLocation(program, "uFilter")
+        uniformPortraitBokeh = GLES20.glGetUniformLocation(program, "uPortraitBokeh")
         initialized = true
     }
 
@@ -437,25 +442,41 @@ private class LookRenderer(
             uniform float uSkin;
             uniform float uSharpen;
             uniform float uFilter;
+            uniform float uPortraitBokeh;
 
             vec3 tap(vec2 offset) {
                 return texture2D(uTexture, vTexCoord + offset * uTexel).rgb;
             }
 
-            bool isSkin(vec3 c) {
-                float r = c.r * 255.0;
-                float g = c.g * 255.0;
-                float b = c.b * 255.0;
-                float spread = max(r, max(g, b)) - min(r, min(g, b));
-                return r > 95.0 && g > 40.0 && b > 20.0 &&
-                    spread > 15.0 && spread < 130.0 &&
-                    abs(r - g) > 15.0 && r > g && r > b;
+            vec3 portraitTap(vec2 uv) {
+                vec3 source = texture2D(uTexture, uv).rgb;
+                if (uPortraitBokeh <= 0.001) return source;
+
+                float level = clamp(uPortraitBokeh, 0.0, 1.0);
+                vec2 radius = vec2(mix(0.30, 0.48, level), mix(0.34, 0.54, level));
+                vec2 point = (uv - vec2(0.5, 0.45)) / radius;
+                float distance = length(point);
+                float feather = mix(0.30, 0.14, level);
+                float t = clamp((distance - 1.0) / feather, 0.0, 1.0);
+                float blurAmount = t * t * (3.0 - 2.0 * t);
+                if (blurAmount <= 0.001) return source;
+
+                // A bounded nine-tap blur is the live-view approximation of
+                // the CPU portrait blur. The saved file still uses the wider
+                // multi-pass blur, and neither path claims actual depth data.
+                vec3 blurred = source;
+                blurred += texture2D(uTexture, uv + vec2( 8.0,  0.0) * uTexel).rgb;
+                blurred += texture2D(uTexture, uv + vec2(-8.0,  0.0) * uTexel).rgb;
+                blurred += texture2D(uTexture, uv + vec2( 0.0,  8.0) * uTexel).rgb;
+                blurred += texture2D(uTexture, uv + vec2( 0.0, -8.0) * uTexel).rgb;
+                blurred += texture2D(uTexture, uv + vec2( 6.0,  6.0) * uTexel).rgb;
+                blurred += texture2D(uTexture, uv + vec2(-6.0,  6.0) * uTexel).rgb;
+                blurred += texture2D(uTexture, uv + vec2( 6.0, -6.0) * uTexel).rgb;
+                blurred += texture2D(uTexture, uv + vec2(-6.0, -6.0) * uTexel).rgb;
+                return mix(source, blurred / 9.0, blurAmount);
             }
 
-            void main() {
-                vec3 color = texture2D(uTexture, vTexCoord).rgb;
-
-                // Clean-room color looks, matched to ImageProcessor's ordering.
+            vec3 applyFilter(vec3 color) {
                 float luma = dot(color, vec3(0.299, 0.587, 0.114));
                 if (uFilter > 0.5 && uFilter < 1.5) {
                     color = vec3(luma);
@@ -472,31 +493,69 @@ private class LookRenderer(
                         dot(color, vec3(0.272, 0.534, 0.131))
                     );
                 }
+                return color;
+            }
 
-                // Local average for the blend steps (mirrors the box blur).
-                vec3 blur = color * 0.2;
-                blur += tap(vec2(2.0, 0.0)) * 0.2;
-                blur += tap(vec2(-2.0, 0.0)) * 0.2;
-                blur += tap(vec2(0.0, 2.0)) * 0.2;
-                blur += tap(vec2(0.0, -2.0)) * 0.2;
-
-                // HDR tone curve (mirrors ImageProcessor.toneCurve).
+            vec3 applyHdr(vec3 color) {
                 if (uHdr > 0.0) {
                     vec3 lifted = pow(color, vec3(1.0 / (1.0 + uHdr)));
                     color = mix(color, lifted, uHdr);
                 }
-                // Noise reduction (mirrors the 0.7 blend factor).
-                color = mix(color, blur, uNr * 0.7);
+                return color;
+            }
+
+            // Every sample used by the post effects starts with the same
+            // filter/HDR steps as ImageProcessor.apply.
+            vec3 baseTap(vec2 offset) {
+                return applyHdr(applyFilter(portraitTap(vTexCoord + offset * uTexel)));
+            }
+
+            bool isSkin(vec3 c) {
+                float r = c.r * 255.0;
+                float g = c.g * 255.0;
+                float b = c.b * 255.0;
+                float spread = max(r, max(g, b)) - min(r, min(g, b));
+                return r > 95.0 && g > 40.0 && b > 20.0 &&
+                    spread > 15.0 && spread < 130.0 &&
+                    abs(r - g) > 15.0 && r > g && r > b;
+            }
+
+            void main() {
+                vec3 color = baseTap(vec2(0.0, 0.0));
+
+                // Match ImageProcessor's radius-2 box average (5 x 5),
+                // applied after filter and HDR. Fixed bounds keep this valid
+                // on the GLES 2 fragment shader used by CameraX.
+                if (uNr > 0.0) {
+                    vec3 nrBlur = vec3(0.0);
+                    for (int y = -2; y <= 2; y++) {
+                        for (int x = -2; x <= 2; x++) {
+                            nrBlur += baseTap(vec2(float(x), float(y)));
+                        }
+                    }
+                    color = mix(color, nrBlur / 25.0, uNr * 0.7);
+                }
                 // Skin smoothing (mirrors the 0.8 blend factor and gate).
                 if (uSkin > 0.0 && isSkin(color)) {
-                    color = mix(color, blur, uSkin * 0.8);
+                    vec3 skinBlur = vec3(0.0);
+                    for (int y = -3; y <= 3; y++) {
+                        for (int x = -3; x <= 3; x++) {
+                            skinBlur += baseTap(vec2(float(x), float(y)));
+                        }
+                    }
+                    color = mix(color, skinBlur / 49.0, uSkin * 0.8);
                 }
-                // Unsharp mask (mirrors the 1.5 amount).
+                // Match ImageProcessor's 3 x 3 radius-1 box unsharp mask,
+                // rather than the old four-neighbour cross that exaggerated
+                // edges and made preview sharpening look different in the file.
                 if (uSharpen > 0.0) {
-                    vec3 small = (
-                        tap(vec2(1.0, 0.0)) + tap(vec2(-1.0, 0.0)) +
-                        tap(vec2(0.0, 1.0)) + tap(vec2(0.0, -1.0))
-                    ) * 0.25;
+                    vec3 small = vec3(0.0);
+                    for (int y = -1; y <= 1; y++) {
+                        for (int x = -1; x <= 1; x++) {
+                            small += baseTap(vec2(float(x), float(y)));
+                        }
+                    }
+                    small /= 9.0;
                     color += (color - small) * (uSharpen * 1.5);
                 }
 

@@ -59,6 +59,18 @@ class PanoramaStitcherTest {
         return out
     }
 
+    private fun renderWithBandOffsets(offsets: List<Int>, width: Int, height: Int): IntArray {
+        val out = IntArray(width * height)
+        for (y in 0 until height) {
+            val band = (y * offsets.size / height).coerceIn(0, offsets.lastIndex)
+            for (x in 0 until width) {
+                val tone = toneAt(x + offsets[band])
+                out[y * width + x] = argb(tone, tone - tone / 12, tone - tone / 6)
+            }
+        }
+        return out
+    }
+
     /**
      * A smooth tonal gradient, with a little broadband texture on top.
      *
@@ -106,6 +118,16 @@ class PanoramaStitcherTest {
         val current = render(shift, width, height)
 
         assertEquals(shift, PanoramaStitcher.estimateShiftX(previous, current, width, height, width / 3))
+    }
+
+    @Test
+    fun estimateShiftXUsesMedianOfVerticalBandsUnderParallax() {
+        val width = 240
+        val height = 90
+        val previous = renderWithBandOffsets(listOf(0, 0, 0), width, height)
+        val current = renderWithBandOffsets(listOf(12, 40, 64), width, height)
+
+        assertEquals(40, PanoramaStitcher.estimateShiftX(previous, current, width, height, width / 3))
     }
 
     @Test
@@ -460,6 +482,42 @@ class PanoramaStitcherTest {
         assertTrue("expected the canvas to grow by the measured shift, got ${afterSecond.estimatedWidth}",
             afterSecond.estimatedWidth > 200)
         assertTrue(afterSecond.progressFraction > 0f)
+    }
+
+    @Test
+    fun liveCaptureRejectsWrongDirectionAndNoMovementImmediately() {
+        val capture = PanoramaCapture(maxDimension = 300)
+        val width = 200
+        val height = 100
+        capture.addFrame(render(0, width, height), width, height, Direction.RIGHT.canvasShiftSign)
+
+        val noMovement = capture.addFrame(render(0, width, height), width, height, Direction.RIGHT.canvasShiftSign)
+        assertEquals(1, noMovement.acceptedFrames)
+        assertEquals(PanoramaCapture.Rejection.NO_MOVEMENT, noMovement.lastRejection)
+
+        val wrongDirection = capture.addFrame(render(-25, width, height), width, height, Direction.RIGHT.canvasShiftSign)
+        assertEquals(1, wrongDirection.acceptedFrames)
+        assertEquals(PanoramaCapture.Rejection.WRONG_DIRECTION, wrongDirection.lastRejection)
+
+        val rightDirection = capture.addFrame(render(25, width, height), width, height, Direction.RIGHT.canvasShiftSign)
+        assertEquals(2, rightDirection.acceptedFrames)
+        assertEquals(Direction.RIGHT, rightDirection.direction)
+        assertTrue(rightDirection.estimatedWidth > width)
+    }
+
+    @Test
+    fun progressivePreviewUsesMeasuredCanvasGeometry() {
+        val capture = PanoramaCapture(maxDimension = 400)
+        val width = 160
+        val height = 80
+        capture.addFrame(render(0, width, height), width, height)
+        val progress = capture.addFrame(render(40, width, height), width, height)
+
+        val preview = requireNotNull(capture.previewPixels(400))
+
+        assertEquals(progress.estimatedWidth, preview.second)
+        assertEquals(height, preview.third)
+        assertEquals(progress.estimatedWidth * height, preview.first.size)
     }
 
     @Test

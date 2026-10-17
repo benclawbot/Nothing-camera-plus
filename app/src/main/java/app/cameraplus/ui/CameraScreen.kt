@@ -2,6 +2,7 @@ package app.cameraplus.ui
 
 import android.Manifest
 import android.app.Activity
+import android.content.Context
 import android.content.ContextWrapper
 import android.content.pm.PackageManager
 import android.content.ClipData
@@ -9,6 +10,12 @@ import android.content.ClipboardManager
 import android.content.Intent
 import android.location.Location
 import android.location.LocationManager
+import android.graphics.Bitmap
+import android.util.Log
+import android.hardware.Sensor
+import android.hardware.SensorEvent
+import android.hardware.SensorEventListener
+import android.hardware.SensorManager
 import android.view.TextureView
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -39,9 +46,11 @@ import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Cameraswitch
 import androidx.compose.material.icons.outlined.FilterCenterFocus
@@ -73,6 +82,8 @@ import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -102,7 +113,9 @@ import app.cameraplus.camera.CaptureTimer
 import app.cameraplus.camera.NightMerger
 import app.cameraplus.camera.Direction
 import app.cameraplus.camera.PanoramaCapture
+import app.cameraplus.camera.PanoramaGuide
 import app.cameraplus.camera.PortraitRenderer
+import app.cameraplus.camera.PortraitSubjectDetector
 import app.cameraplus.camera.SelfTimer
 import app.cameraplus.camera.VideoQuality
 import app.cameraplus.camera.SessionCapabilities
@@ -141,7 +154,7 @@ enum class CameraMode(val label: String, val session: SessionMode?) {
     PORTRAIT("PORTRAIT", SessionMode.PHOTO),
     BEAUTY("BEAUTY", SessionMode.PHOTO),
     NIGHT("NIGHT", SessionMode.PHOTO),
-    PANORAMA("PANORAMA", SessionMode.PHOTO),
+    PANORAMA("PANORAMA", SessionMode.PANORAMA),
     MACRO("MACRO", SessionMode.PHOTO),
     QR("QR", SessionMode.QR),
     VIDEO("VIDEO", SessionMode.VIDEO),
@@ -185,10 +198,17 @@ fun CameraScreen() {
     val session = remember { CameraSession(context, lifecycleOwner) }
     val previewView = remember {
         PreviewView(context).apply {
-            scaleType = PreviewView.ScaleType.FILL_CENTER
+            // CameraSession binds a ViewPort matching the actual still/video
+            // crop. Fit that viewport inside the full-screen viewfinder so
+            // the black letterbox is honest, rather than filling it with a
+            // tighter crop than the saved frame.
+            scaleType = PreviewView.ScaleType.FIT_CENTER
         }
     }
     val camera2TextureView = remember(context) { TextureView(context) }
+    val sensorManager = remember(context) {
+        context.getSystemService(Context.SENSOR_SERVICE) as SensorManager
+    }
     val screenFlashView = remember(context) { ScreenFlashView(context) }
     val coroutineScope = rememberCoroutineScope()
 
@@ -230,10 +250,17 @@ fun CameraScreen() {
     var processingCapture by remember { mutableStateOf(false) }
     var status by remember { mutableStateOf<String?>(null) }
     var lastMediaUri by remember { mutableStateOf<Uri?>(null) }
+    var dismissedQrValue by remember { mutableStateOf<String?>(null) }
     var bokehLevel by remember { mutableFloatStateOf(capturePreferences.portraitBlurLevel) }
     val panoramaCapture = remember { PanoramaCapture() }
     var panoramaProgress by remember { mutableStateOf(panoramaCapture.progress()) }
     var panoramaDirection by remember { mutableStateOf(Direction.RIGHT) }
+    var panoramaStreaming by remember { mutableStateOf(false) }
+    var panoramaPreview by remember { mutableStateOf<Bitmap?>(null) }
+    val panoramaGuide = remember(panoramaDirection) {
+        PanoramaGuide(forwardSign = if (panoramaDirection == Direction.RIGHT) -1f else 1f)
+    }
+    var panoramaGuideState by remember { mutableStateOf(panoramaGuide.state()) }
 
     // The analyzer only runs in modes backed by the CameraX still/video
     // pipeline; the armed preference survives a detour through other modes.
@@ -254,6 +281,8 @@ fun CameraScreen() {
     var evIndex by remember { mutableIntStateOf(0) }
     var recording by remember { mutableStateOf(false) }
     var specialStarting by remember { mutableStateOf(false) }
+    var camera2PreviewVisible by remember { mutableStateOf(false) }
+    var camera2PreviewNeedsRestore by remember { mutableStateOf(false) }
     var recordStartedAt by remember { mutableStateOf(0L) }
     var recordSeconds by remember { mutableStateOf(0) }
     var slowMotionRates by remember { mutableStateOf<List<Int>>(emptyList()) }
@@ -313,6 +342,14 @@ fun CameraScreen() {
             onClipFinished = { uri ->
                 if (uri != null) lastMediaUri = uri
                 status = if (uri != null) "Video saved" else "Recording did not produce a usable clip"
+                // This callback runs after Camera2Recorder has released the
+                // camera/session/surface; ask the effect below to resume the
+                // live CameraX preview regardless of the current mode. The
+                // effect itself checks whether a special mode is still active.
+                camera2PreviewNeedsRestore = true
+                if (Log.isLoggable(CAMERA2_PREVIEW_TAG, Log.DEBUG)) {
+                    Log.d(CAMERA2_PREVIEW_TAG, "clip finished; requesting preview restore (uri=$uri)")
+                }
             },
         )
     }
@@ -441,8 +478,11 @@ fun CameraScreen() {
         session.bind(
             previewView = previewView,
             onQrCode = { value ->
-                qrResult = value
-                status = "QR code detected"
+                if (value != dismissedQrValue) {
+                    dismissedQrValue = null
+                    qrResult = value
+                    status = "QR code detected"
+                }
             },
             onSubjectTracked = { x, y, confidence ->
                 trackingPoint = Offset(x, y)
@@ -480,6 +520,34 @@ fun CameraScreen() {
         )
     }
 
+    // Camera2 owns the camera while these special modes record. Once its
+    // MediaRecorder session closes, its TextureView otherwise keeps showing
+    // the final buffered frame. Rebind CameraX's live preview into PreviewView
+    // while keeping the selected mode and its controls in place.
+    LaunchedEffect(camera2PreviewNeedsRestore, mode, recording, specialStarting) {
+        if (!camera2PreviewNeedsRestore) return@LaunchedEffect
+        if (!mode.usesCamera2Recorder) {
+            camera2PreviewNeedsRestore = false
+            return@LaunchedEffect
+        }
+        if (recording || specialStarting) return@LaunchedEffect
+        if (Log.isLoggable(CAMERA2_PREVIEW_TAG, Log.DEBUG)) {
+            Log.d(CAMERA2_PREVIEW_TAG, "restoring live CameraX preview in ${mode.name}")
+        }
+        camera2PreviewVisible = false
+        delay(100)
+        session.setProfile(
+            newMode = SessionMode.PHOTO,
+            extensionMode = ExtensionMode.NONE,
+            bindAfterChange = false,
+            macroMode = false,
+        )
+        bindCameraX()
+        // Do not clear this keyed state until after the suspend/bind above:
+        // changing a LaunchedEffect key earlier cancels its own coroutine.
+        camera2PreviewNeedsRestore = false
+    }
+
     DisposableEffect(lifecycleOwner) {
         bindCameraX()
         onDispose {
@@ -493,6 +561,15 @@ fun CameraScreen() {
     LaunchedEffect(processing) {
         session.setLook(processing) { error ->
             status = error.message ?: "Could not apply the preview look"
+        }
+    }
+
+    LaunchedEffect(mode, bokehLevel, capabilities.extensionActive) {
+        session.setPortraitBokehPreview(
+            enabled = mode == CameraMode.PORTRAIT && !capabilities.extensionActive,
+            level = bokehLevel,
+        ) { error ->
+            status = error.message ?: "Could not update portrait preview"
         }
     }
 
@@ -570,14 +647,23 @@ fun CameraScreen() {
 
     var previousMode by remember { mutableStateOf(CameraMode.PHOTO) }
     LaunchedEffect(mode) {
-        if (mode == CameraMode.QR) qrResult = null
+        // A decoded link is a one-shot action, not a sticky overlay when the
+        // user changes modes or returns from an external browser.
+        qrResult = null
+        dismissedQrValue = null
         if (previousMode == CameraMode.PANORAMA && mode != CameraMode.PANORAMA) {
+            session.stopPanoramaStream()
+            panoramaStreaming = false
             panoramaCapture.reset()
             panoramaProgress = panoramaCapture.progress()
+            panoramaPreview = null
+            panoramaGuide.reset()
+            panoramaGuideState = panoramaGuide.state()
         }
         if (mode.usesCamera2Recorder) {
             // Camera2 and CameraX cannot own the camera at the same time.
             session.unbind()
+            camera2PreviewVisible = true
             if (mode == CameraMode.SLOW_MOTION) {
                 slowMotionRates = withContext(Dispatchers.IO) {
                     camera2Recorder.supportedSlowMotionRates()
@@ -588,6 +674,8 @@ fun CameraScreen() {
             }
         } else if (previousMode.usesCamera2Recorder) {
             withContext(Dispatchers.IO) { camera2Recorder.stop() }
+            camera2PreviewVisible = false
+            camera2PreviewNeedsRestore = false
             mode.session?.let {
                 session.setProfile(
                     newMode = it,
@@ -714,27 +802,36 @@ fun CameraScreen() {
         coroutineScope.launch {
             try {
                 val frame = capturePixelFrame(MODE_CAPTURE_MAX_DIMENSION)
-                var bokehApplied = true
-                val rendered = try {
+                val (rendered, faceDetected) = try {
                     withContext(Dispatchers.Default) {
-                        PortraitRenderer.blurBackground(
+                        val subject = PortraitSubjectDetector.detectShape(
                             pixels = frame.pixels,
                             width = frame.width,
                             height = frame.height,
-                            shape = PortraitRenderer.defaultShape(frame.width, frame.height, bokehLevel),
+                            level = bokehLevel,
+                        )
+                        val output = PortraitRenderer.blurBackground(
+                            pixels = frame.pixels,
+                            width = frame.width,
+                            height = frame.height,
+                            shape = subject.shape,
                             maxBlurRadius = PORTRAIT_BLUR_RADIUS,
                         ).also { ImageProcessor.apply(it, frame.width, frame.height, processing) }
+                        output to subject.faceDetected
                     }
                 } catch (_: Throwable) {
-                    bokehApplied = false
-                    frame.pixels
+                    frame.pixels to false
                 }
                 saveModeCapture(
                     rendered,
                     frame.width,
                     frame.height,
                     "Portrait",
-                    if (bokehApplied) "Simulated bokeh · no depth data" else "Bokeh skipped · original frame saved",
+                    if (faceDetected) {
+                        "Face-guided software bokeh · no depth data"
+                    } else {
+                        "Centre-guided software bokeh · no face or depth data"
+                    },
                 )
             } catch (error: Throwable) {
                 finishModeCapture(error.message ?: "Portrait capture failed")
@@ -773,29 +870,65 @@ fun CameraScreen() {
     }
 
     fun capturePanoramaFrame() {
-        if (processingCapture) return
-        processingCapture = true
-        inFlight++
-        session.capturePixelFrame(
+        if (processingCapture || panoramaStreaming) return
+        panoramaCapture.reset()
+        panoramaProgress = panoramaCapture.progress()
+        panoramaPreview = null
+        panoramaGuide.reset()
+        panoramaGuideState = panoramaGuide.state()
+        val expectedDirection = panoramaDirection.canvasShiftSign
+        val directionLabel = panoramaDirection.name.lowercase(Locale.US)
+        val started = session.startPanoramaStream(
             maxDimension = PanoramaCapture.DEFAULT_MAX_DIMENSION,
             onFrame = { frame ->
-                val previousCount = panoramaProgress.acceptedFrames
-                val updated = panoramaCapture.addFrame(frame.pixels, frame.width, frame.height)
-                panoramaProgress = updated
-                finishModeCapture(
-                    if (updated.acceptedFrames > previousCount) {
-                        "Panorama frame ${updated.acceptedFrames}/${updated.maxFrames}"
-                    } else {
-                        "Panorama frame rejected · move more slowly"
-                    },
+                val previousCount = panoramaCapture.frameCount
+                val updated = panoramaCapture.addFrame(
+                    frame.pixels,
+                    frame.width,
+                    frame.height,
+                    expectedDirection = expectedDirection,
                 )
+                val preview = if (updated.acceptedFrames > previousCount) {
+                    panoramaCapture.previewBitmap(PanoramaCapture.PREVIEW_MAX_WIDTH)
+                } else {
+                    null
+                }
+                coroutineScope.launch(Dispatchers.Main.immediate) {
+                    panoramaProgress = updated
+                    if (preview != null) panoramaPreview = preview
+                    status = when {
+                        updated.lastRejection == PanoramaCapture.Rejection.WRONG_DIRECTION -> "Wrong way · turn $directionLabel"
+                        updated.lastRejection == PanoramaCapture.Rejection.NO_MOVEMENT -> "Keep panning slowly"
+                        updated.acceptedFrames == 1 -> "Keep panning · image building"
+                        else -> "${updated.acceptedFrames} frames · ${updated.estimatedWidth}×${updated.estimatedHeight}"
+                    }
+                }
             },
-            onError = { error -> finishModeCapture(error.message ?: "Panorama frame failed") },
+            onError = { error ->
+                coroutineScope.launch(Dispatchers.Main.immediate) {
+                    status = error.message ?: "Panorama frame failed"
+                }
+            },
         )
+        if (started) {
+            panoramaStreaming = true
+            status = "Pan slowly $directionLabel · keep level"
+        }
     }
 
     fun finishPanorama() {
         if (processingCapture) return
+        session.stopPanoramaStream()
+        panoramaStreaming = false
+        val capturedProgress = panoramaCapture.progress()
+        panoramaProgress = capturedProgress
+        if (capturedProgress.acceptedFrames < 2) {
+            panoramaCapture.reset()
+            panoramaProgress = panoramaCapture.progress()
+            panoramaPreview = null
+            status = "Panorama needs at least two aligned frames"
+            return
+        }
         processingCapture = true
         inFlight++
         coroutineScope.launch {
@@ -805,7 +938,7 @@ fun CameraScreen() {
                         runCatching { ImageProcessor.apply(it.pixels, it.width, it.height, processing) }
                     }
                 }
-                panoramaProgress = panoramaCapture.progress()
+                panoramaProgress = capturedProgress
                 if (result == null) {
                     finishModeCapture("Panorama needs at least two aligned frames")
                     return@launch
@@ -823,12 +956,57 @@ fun CameraScreen() {
         }
     }
 
+    DisposableEffect(panoramaStreaming, panoramaGuide, sensorManager) {
+        if (!panoramaStreaming) {
+            onDispose { }
+        } else {
+            val gyro = sensorManager.getDefaultSensor(Sensor.TYPE_GYROSCOPE)
+            val accelerometer = sensorManager.getDefaultSensor(Sensor.TYPE_ACCELEROMETER)
+            val listener = object : SensorEventListener {
+                override fun onSensorChanged(event: SensorEvent) {
+                    when (event.sensor.type) {
+                        Sensor.TYPE_GYROSCOPE -> panoramaGuide.onGyro(
+                            event.values[0], event.values[1], event.values[2], event.timestamp,
+                        )
+                        Sensor.TYPE_ACCELEROMETER -> panoramaGuide.onAccelerometer(
+                            event.values[0], event.values[1], event.values[2], event.timestamp,
+                        )
+                    }
+                }
+
+                override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) = Unit
+            }
+            if (gyro != null) sensorManager.registerListener(listener, gyro, SensorManager.SENSOR_DELAY_GAME)
+            if (accelerometer != null) {
+                sensorManager.registerListener(listener, accelerometer, SensorManager.SENSOR_DELAY_GAME)
+            }
+            onDispose { sensorManager.unregisterListener(listener) }
+        }
+    }
+
+    LaunchedEffect(panoramaStreaming, panoramaGuide, panoramaProgress.isFull) {
+        if (!panoramaStreaming) {
+            panoramaGuideState = panoramaGuide.state()
+            return@LaunchedEffect
+        }
+        while (panoramaStreaming) {
+            panoramaGuideState = panoramaGuide.state()
+            if (panoramaProgress.isFull ||
+                (panoramaProgress.acceptedFrames >= 2 && panoramaGuideState.sweepProgress >= 1f)
+            ) {
+                finishPanorama()
+                break
+            }
+            delay(100)
+        }
+    }
+
     fun captureCurrentMode() {
         when (mode) {
             CameraMode.NIGHT -> if (capabilities.extensionActive) captureNow() else captureNight()
             CameraMode.PORTRAIT -> if (capabilities.extensionActive) captureNow() else capturePortrait()
             CameraMode.BEAUTY -> if (capabilities.extensionActive) captureNow() else captureBeauty()
-            CameraMode.PANORAMA -> capturePanoramaFrame()
+            CameraMode.PANORAMA -> if (panoramaStreaming) finishPanorama() else capturePanoramaFrame()
             CameraMode.QR -> Unit
             else -> captureNow()
         }
@@ -870,6 +1048,10 @@ fun CameraScreen() {
         specialStarting = true
         coroutineScope.launch {
             try {
+                if (!camera2PreviewVisible) {
+                    session.unbind()
+                    camera2PreviewVisible = true
+                }
                 val uri = when (mode) {
                     CameraMode.SLOW_MOTION -> camera2Recorder.startSlowMotion(
                         fps = slowMotionFps,
@@ -888,9 +1070,12 @@ fun CameraScreen() {
                     } else {
                         "Recording time lapse · X$timeLapseSpeed"
                     }
+                } else {
+                    camera2PreviewNeedsRestore = true
                 }
             } catch (error: Exception) {
                 status = error.message ?: "Could not start recording"
+                camera2PreviewNeedsRestore = true
             } finally {
                 specialStarting = false
             }
@@ -927,7 +1112,7 @@ fun CameraScreen() {
             .fillMaxSize()
             .background(Black),
     ) {
-        if (mode.usesCamera2Recorder) {
+        if (mode.usesCamera2Recorder && camera2PreviewVisible) {
             AndroidView(
                 factory = { camera2TextureView },
                 modifier = Modifier.fillMaxSize(),
@@ -954,7 +1139,11 @@ fun CameraScreen() {
                         .align(Alignment.Center)
                         .clip(CircleShape)
                         .background(Color(0xCC000000))
-                        .clickable { openQrResult(context, result) }
+                        .clickable {
+                            dismissedQrValue = result
+                            qrResult = null
+                            openQrResult(context, result) { note -> status = note }
+                        }
                         .padding(horizontal = 18.dp, vertical = 12.dp),
                 )
             }
@@ -969,6 +1158,69 @@ fun CameraScreen() {
             modifier = Modifier.fillMaxSize(),
         )
 
+        if (mode == CameraMode.PANORAMA) {
+            val guideText = when (panoramaGuideState.hint) {
+                PanoramaGuide.Hint.READY -> "START SWEEP"
+                PanoramaGuide.Hint.PAN -> "FOLLOW THE LINE · KEEP LEVEL"
+                PanoramaGuide.Hint.TOO_FAST -> "SLOW DOWN"
+                PanoramaGuide.Hint.WRONG_WAY -> "TURN ${panoramaDirection.name}"
+                PanoramaGuide.Hint.HOLD_LEVEL -> "HOLD LEVEL"
+                PanoramaGuide.Hint.STILL -> "KEEP MOVING SLOWLY"
+            }
+            Column(
+                modifier = Modifier
+                    .align(Alignment.Center)
+                    .padding(horizontal = 26.dp)
+                    .clip(RoundedCornerShape(10.dp))
+                    .background(Color(0xD9000000))
+                    .padding(10.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(7.dp),
+            ) {
+                Text(
+                    text = if (panoramaStreaming) guideText else "TAP SHUTTER · SWEEP ${panoramaDirection.name}",
+                    color = White,
+                    fontFamily = FontFamily.Monospace,
+                    style = MaterialTheme.typography.labelSmall,
+                )
+                panoramaPreview?.let { bitmap ->
+                    Image(
+                        bitmap = bitmap.asImageBitmap(),
+                        contentDescription = "Live panorama preview strip",
+                        contentScale = ContentScale.FillBounds,
+                        modifier = Modifier
+                            .width(300.dp)
+                            .height(76.dp)
+                            .clip(RoundedCornerShape(4.dp)),
+                    )
+                }
+                Canvas(modifier = Modifier.width(300.dp).height(22.dp)) {
+                    val y = size.height / 2f
+                    drawLine(
+                        color = White.copy(alpha = 0.75f),
+                        start = Offset(0f, y),
+                        end = Offset(size.width, y),
+                        strokeWidth = 2.dp.toPx(),
+                    )
+                    val progress = if (panoramaStreaming) panoramaGuideState.sweepProgress else 0f
+                    val x = size.width * progress
+                    drawCircle(color = Black, radius = 8.dp.toPx(), center = Offset(x, y))
+                    drawCircle(color = White, radius = 6.dp.toPx(), center = Offset(x, y))
+                }
+                Text(
+                    text = if (panoramaStreaming) {
+                        "${(panoramaGuideState.sweepProgress * 100).roundToInt()}% · " +
+                            "${panoramaProgress.acceptedFrames}/${panoramaProgress.maxFrames} FRAMES"
+                    } else {
+                        "${panoramaProgress.acceptedFrames}/${panoramaProgress.maxFrames} FRAMES"
+                    },
+                    color = White,
+                    fontFamily = FontFamily.Monospace,
+                    style = MaterialTheme.typography.labelSmall,
+                )
+            }
+        }
+
         // M4: show what stabilization takes away while in video mode.
         if (mode == CameraMode.VIDEO && stabilizationEnabled) {
             val crop = StabilizationProfile.estimatedCrop(capabilities.stabilization)
@@ -979,7 +1231,10 @@ fun CameraScreen() {
             )
         }
 
-        if (!mode.usesCamera2Recorder) Box(
+        // QR mode has its own clickable decoded-result chip above. Leaving
+        // the generic full-screen focus/tap layer over it intercepts taps and
+        // makes a decoded web link appear to do nothing.
+        if (!mode.usesCamera2Recorder && mode != CameraMode.QR) Box(
             modifier = Modifier
                 .fillMaxSize()
                 .pointerInput(Unit) {
@@ -1259,6 +1514,7 @@ fun CameraScreen() {
             if (!mode.usesCamera2Recorder) {
                 ZoomPill(
                     stops = capabilities.zoomStops.filter { it <= modeZoomMaximum + 0.01f },
+                    opticalStops = capabilities.opticalZoomStops,
                     current = zoom,
                     zoomable = modeZoomMaximum > capabilities.minDisplayedZoom,
                     onSelect = { stop ->
@@ -1307,9 +1563,11 @@ fun CameraScreen() {
                         },
                         onNoiseReductionToggle = {
                             val next = !videoNoiseReductionEnabled
+                            val previous = videoNoiseReductionEnabled
                             videoNoiseReductionEnabled = next
                             session.setVideoNoiseReductionEnabled(next) { error ->
-                                status = error.message ?: "Could not change 3DNR"
+                                videoNoiseReductionEnabled = previous
+                                status = error.message ?: "Could not change video NR"
                             }
                         },
                         onActionToggle = {
@@ -1423,7 +1681,7 @@ fun CameraScreen() {
                             text = if (capabilities.extensionActive) {
                                 "CAMERA HARDWARE BOKEH"
                             } else {
-                                "SIMULATED BOKEH · NO DEPTH DATA"
+                                "SOFTWARE BOKEH · DEPTH NOT EXPOSED"
                             },
                             color = DimWhite,
                             fontFamily = FontFamily.Monospace,
@@ -1475,7 +1733,7 @@ fun CameraScreen() {
                         ToggleChip(
                             label = "SWEEP ${panoramaDirection.name}",
                             active = true,
-                            enabled = !processingCapture,
+                            enabled = !processingCapture && !panoramaStreaming,
                             onClick = {
                                 panoramaDirection = panoramaDirection.opposite
                             },
@@ -1486,10 +1744,10 @@ fun CameraScreen() {
                             fontFamily = FontFamily.Monospace,
                             style = MaterialTheme.typography.labelSmall,
                         )
-                        if (panoramaProgress.acceptedFrames >= 2) {
+                        if (panoramaStreaming || panoramaProgress.acceptedFrames >= 2) {
                             ToggleChip(
-                                label = "FINISH",
-                                active = false,
+                                label = if (panoramaStreaming) "STOP & SAVE" else "FINISH",
+                                active = panoramaStreaming,
                                 enabled = !processingCapture,
                                 onClick = { finishPanorama() },
                             )
@@ -1525,6 +1783,7 @@ fun CameraScreen() {
                         selected = slowMotionFps,
                         format = { "${it}FPS" },
                         unavailableLabel = "SLOW MOTION NOT SUPPORTED",
+                        enabled = !recording && !specialStarting,
                         onSelect = { slowMotionFps = it },
                     )
                     Spacer(Modifier.height(14.dp))
@@ -1537,6 +1796,7 @@ fun CameraScreen() {
                         selected = timeLapseSpeed,
                         format = { "X$it" },
                         unavailableLabel = "TIME LAPSE",
+                        enabled = !recording && !specialStarting,
                         onSelect = { timeLapseSpeed = it },
                     )
                     Spacer(Modifier.height(14.dp))
@@ -1547,7 +1807,7 @@ fun CameraScreen() {
                 selected = mode,
                 macroSupported = capabilities.macroFocusSupported,
                 onSelect = { selected ->
-                    if (recording || specialStarting || processingCapture) {
+                    if (recording || specialStarting || processingCapture || panoramaStreaming) {
                         status = "Stop recording before switching modes"
                     } else if (selected == CameraMode.MACRO && !capabilities.macroFocusSupported) {
                         status = "This camera does not expose macro autofocus"
@@ -1636,7 +1896,8 @@ fun CameraScreen() {
                 } else if (mode.usesCamera2Recorder) {
                     RecordButton(
                         recording = recording,
-                        enabled = !specialStarting || recording,
+                        enabled = (!specialStarting || recording) &&
+                            (mode != CameraMode.SLOW_MOTION || slowMotionRates.isNotEmpty()),
                         onClick = { toggleCamera2Recording() },
                     )
                 } else if (mode == CameraMode.QR) {
@@ -1648,8 +1909,8 @@ fun CameraScreen() {
                     )
                 } else {
                     ShutterButton(
-                        capturing = inFlight > 0,
-                        enabled = inFlight < MAX_IN_FLIGHT && !processingCapture,
+                        capturing = inFlight > 0 || panoramaStreaming,
+                        enabled = (inFlight < MAX_IN_FLIGHT || panoramaStreaming) && !processingCapture,
                         pulse = shutterPulse,
                         onClick = { pressStillShutter() },
                     )
@@ -1658,7 +1919,8 @@ fun CameraScreen() {
                     imageVector = Icons.Outlined.Cameraswitch,
                     contentDescription = "Switch camera",
                     enabled = !mode.usesCamera2Recorder &&
-                        !(mode == CameraMode.PANORAMA && panoramaProgress.acceptedFrames > 0),
+                        !(mode == CameraMode.PANORAMA &&
+                            (panoramaStreaming || panoramaProgress.acceptedFrames > 0)),
                     onClick = {
                         if (recording) {
                             status = "Stop recording to switch cameras"
@@ -1727,12 +1989,19 @@ fun CameraScreen() {
 @Composable
 private fun ZoomPill(
     stops: List<Float>,
+    opticalStops: List<Float>,
     current: Float,
     zoomable: Boolean,
     onSelect: (Float) -> Unit,
 ) {
     if (stops.isEmpty()) return
-    val currentLabel = LensZoomPlan.stopLabel(current)
+    val currentLabel = LensZoomPlan.stopLabel(current) + if (
+        opticalStops.any { abs(it - current) < 0.05f }
+    ) {
+        " · LENS"
+    } else {
+        " · DIGITAL"
+    }
     Column(horizontalAlignment = Alignment.CenterHorizontally) {
         if (zoomable) {
             Text(
@@ -1803,31 +2072,31 @@ private fun VideoChips(
         ToggleChip(
             label = if (stabilization == StabilizationLevel.NONE) "STAB N/A" else "STAB",
             active = stabilizationEnabled && stabilization != StabilizationLevel.NONE,
-            enabled = stabilization != StabilizationLevel.NONE,
+            enabled = !recording && stabilization != StabilizationLevel.NONE,
             onClick = onStabToggle,
         )
         ToggleChip(
             label = "MIC",
             active = micEnabled,
-            enabled = true,
+            enabled = !recording,
             onClick = onMicToggle,
         )
         ToggleChip(
             label = "OIS",
             active = opticalStabilizationEnabled,
-            enabled = opticalStabilizationSupported,
+            enabled = !recording && opticalStabilizationSupported,
             onClick = onOisToggle,
         )
         ToggleChip(
-            label = "3DNR",
+            label = "NR",
             active = videoNoiseReductionEnabled,
-            enabled = videoNoiseReductionSupported,
+            enabled = !recording && videoNoiseReductionSupported,
             onClick = onNoiseReductionToggle,
         )
         ToggleChip(
             label = "ACTION",
             active = frameRate == VideoFrameRate.FPS_60 && stabilizationEnabled,
-            enabled = VideoFrameRate.FPS_60 in supportedFrameRates,
+            enabled = !recording && VideoFrameRate.FPS_60 in supportedFrameRates,
             onClick = onActionToggle,
         )
         ToggleChip(
@@ -1989,7 +2258,7 @@ private fun ToggleChip(
         else -> Color(0x33000000)
     }
     val textColor = when {
-        !enabled -> FaintWhite
+        !enabled -> White
         active -> Black
         else -> White
     }
@@ -2056,6 +2325,7 @@ private fun RateSelector(
     selected: Int,
     format: (Int) -> String,
     unavailableLabel: String,
+    enabled: Boolean,
     onSelect: (Int) -> Unit,
 ) {
     Column(horizontalAlignment = Alignment.CenterHorizontally) {
@@ -2068,7 +2338,7 @@ private fun RateSelector(
         if (choices.isEmpty()) {
             Text(
                 text = unavailableLabel,
-                color = FaintWhite,
+                color = White,
                 fontFamily = FontFamily.Monospace,
                 style = MaterialTheme.typography.labelSmall,
                 modifier = Modifier.padding(top = 8.dp),
@@ -2084,7 +2354,7 @@ private fun RateSelector(
                     ToggleChip(
                         label = format(choice),
                         active = selected == choice,
-                        enabled = true,
+                        enabled = enabled,
                         onClick = { onSelect(choice) },
                     )
                 }
@@ -2225,18 +2495,47 @@ private fun requestCurrentLocation(context: android.content.Context, onResult: (
     }.onFailure { onResult(lastKnownLocation(manager)) }
 }
 
-private fun openQrResult(context: android.content.Context, value: String) {
-    val uri = runCatching { Uri.parse(value) }.getOrNull()
-    if (uri?.scheme in setOf("https", "http", "mailto", "tel")) {
-        runCatching { context.startActivity(Intent(Intent.ACTION_VIEW, uri)) }
+private fun openQrResult(
+    context: android.content.Context,
+    value: String,
+    onStatus: (String) -> Unit = {},
+) {
+    val content = value.trim()
+    val parsed = runCatching { Uri.parse(content) }.getOrNull()
+    val uri = when {
+        parsed?.scheme in setOf("https", "http", "mailto", "tel") -> parsed
+        parsed?.scheme.isNullOrBlank() && WEB_ADDRESS.matches(content) -> Uri.parse("https://$content")
+        else -> null
+    }
+    if (uri != null) {
+        val opened = runCatching {
+            context.startActivity(Intent(Intent.ACTION_VIEW, uri).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+            true
+        }.getOrDefault(false)
+        if (opened) {
+            onStatus("Opening link")
+            return
+        }
+        copyQrContent(context, content)
+        onStatus("Could not open link · copied to clipboard")
+        Toast.makeText(context, "Could not open link · copied", Toast.LENGTH_SHORT).show()
         return
     }
+    copyQrContent(context, content)
+    onStatus("QR content copied")
+    Toast.makeText(context, "QR content copied", Toast.LENGTH_SHORT).show()
+}
+
+private fun copyQrContent(context: android.content.Context, value: String) {
     runCatching {
         val clipboard = context.getSystemService(android.content.Context.CLIPBOARD_SERVICE) as ClipboardManager
         clipboard.setPrimaryClip(ClipData.newPlainText("QR code", value))
-        Toast.makeText(context, "QR content copied", Toast.LENGTH_SHORT).show()
     }
 }
+
+private val WEB_ADDRESS = Regex(
+    "^(?:[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?\\.)+[A-Za-z]{2,}(?::[0-9]+)?(?:/[^\\s]*)?$",
+)
 
 private fun findActivity(context: android.content.Context): Activity? {
     var current = context
@@ -2270,3 +2569,4 @@ private const val PORTRAIT_BLUR_RADIUS = 18
 
 /** Stock time-lapse speed choices, expressed as multiples of normal playback. */
 private val TIME_LAPSE_SPEEDS = listOf(15, 30, 60, 120, 240, 480, 960)
+private const val CAMERA2_PREVIEW_TAG = "Camera2Preview"

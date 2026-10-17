@@ -56,11 +56,11 @@ ArcSoft/morpho panorama, smile shutter (vendor face ML).
 |---|---|---|
 | Photo | ✅ | |
 | Video | ✅ | |
-| Portrait / Bokeh | 🟡 | CameraX BOKEH extension if advertised; otherwise software blur without depth |
+| Portrait / Bokeh | 🟡 | CameraX BOKEH extension if advertised; otherwise face-guided software blur, no depth map |
 | Night | 🟡 | CameraX NIGHT extension if advertised; otherwise 4-frame downsampled merge |
 | Slow motion (device-supported high-speed rates) | 🟡 | Camera2 constrained high-speed + MediaRecorder path; hardware unverified |
 | Time lapse (X15…X960) | 🟡 | Camera2 + MediaRecorder interval path; hardware unverified |
-| Panorama (+ direction switch, super/standard) | 🟡 | UI + translation-only software stitch; no rotation correction, downsampled |
+| Panorama (+ direction switch, super/standard) | 🟡 | Continuous YUV sweep, gyro/level guide and progressive preview; three-band translation stitch, device check pending |
 | Macro / Detail close-up | 🟡 | Camera2 macro AF mode when the lens reports it; 4cm/tele macro unverified |
 | Expert / Manual | 🟡 | ISO/shutter/MF/EV and WB presets/custom Kelvin; histogram/Pro meter missing |
 | Beauty / retouching | 🟡 | CameraX FACE_RETOUCH extension when available; fallback is basic smoothing |
@@ -91,8 +91,8 @@ ArcSoft/morpho panorama, smile shutter (vendor face ML).
 
 | Feature | Camera+ | Note |
 |---|---|---|
-| 0.6x / 1x / 2x lens stops | 🟡 | logical/physical focal planning implemented; hardware enumeration unverified |
-| Pinch zoom over device range | 🟡 | gestures + range clamp implemented; hardware range unverified |
+| 0.6x / 1x / 2x lens stops | 🟡 | uses public CameraX/Camera2 lens metadata; the tested A001 exposes one public back camera, so 2x+ stops are digital and hidden OEM lenses are unavailable |
+| Pinch zoom over device range | 🟡 | gestures + range clamp implemented; preview and saved still now share the same viewport |
 | Per-mode zoom caps (night 30x, slo-mo 2x, timelapse 10x) | 🟡 | CameraX modes are capped; Camera2 slow-motion/time-lapse gestures remain limited |
 | Focal-length labels (14/24/28/35mm…) | ⬜ | cosmetic |
 
@@ -105,7 +105,7 @@ ArcSoft/morpho panorama, smile shutter (vendor face ML).
 | OIS control | 🟡 | Camera2 OIS request when reported by the bound lens |
 | Action mode 60fps | 🟡 | 60fps + stabilization shortcut; stabilization behavior hardware-dependent |
 | Night video | ⬜ | |
-| Video 3DNR | 🟡 | Camera2 HIGH_QUALITY noise-reduction request when reported |
+| Video noise reduction | 🟡 | Camera2 FAST spatial NR request when reported; temporal 3DNR is not implemented |
 | OIS on/off | 🟡 | Camera2 OIS request when supported by the bound lens |
 | H.264 / H.265 encoder picker | 🟡 | CameraX picks; no UI |
 | Audio mute | ✅ | |
@@ -145,7 +145,7 @@ ArcSoft/morpho panorama, smile shutter (vendor face ML).
 | Feature | Camera+ | Note |
 |---|---|---|
 | Interval / speed picker (X15…X960) | 🟡 | speed choices mapped to MediaRecorder capture intervals; hardware unverified |
-| 1080p / 4K | 🟡 | selects largest MediaRecorder size; no user resolution picker |
+| 1080p / 4K | 🟡 | uses the largest FHD-or-smaller MediaRecorder size for reliable low-rate capture; no user resolution picker |
 
 ## Panorama
 
@@ -253,7 +253,7 @@ unit-tested math component does not count as hardware feature parity.
 | Action Mode 60fps | 🟡 | 60fps + stabilization shortcut; hardware behavior unverified |
 | Standard / Super EIS / Off | 🟡 | capability-detected standard/preview stabilization toggle; no Super EIS mode |
 | Night video | ⬜ | `pref_video_night_key` |
-| Video 3DNR | 🟡 | Camera2 high-quality noise-reduction request when camera reports support |
+| Video noise reduction | 🟡 | Camera2 FAST spatial NR request when camera reports support; not temporal 3DNR |
 | Beauty video and retouch levels | 🚫 | vendor face pipeline |
 | Recording red-light preference | ⬜ | `pref_video_record_red_light_key` |
 | H.264 / H.265 selector | ⬜ | CameraX/MediaRecorder selects codec; no user selector |
@@ -263,10 +263,10 @@ unit-tested math component does not count as hardware feature parity.
 | Mirror capture | 🟡 | front-camera still/video mirroring is wired; device behavior unverified |
 | Zoom/lens switching while recording | 🟡 | UI zoom planning exists; hardware transition behavior unverified |
 | Video snapshot while recording | 🟡 | concurrent CameraX still use case with video-only fallback; device support unverified |
-| Slow motion 1080p120/240/480 and 4K120 | 🟡 | dynamically enumerates high-speed rates up to 1080p; 4K120 is not offered |
+| Slow motion 1080p120/240/480 and 4K120 | 🟡 | dynamically enumerates advertised high-speed sizes/rates up to 4K; device behavior unverified |
 | Slow-motion supported-rate picker | 🟡 | device-reported rate picker; needs hardware validation |
 | Slow-motion zoom cap and mute/snapshot rules | 🟡 | 2x zoom cap implemented (`ModeZoomPlan`); mute/snapshot rules absent |
-| Time lapse 1080p / 4K choice | 🟡 | picks largest MediaRecorder size; no user resolution selector |
+| Time lapse 1080p / 4K choice | 🟡 | bounded to FHD-or-smaller to avoid `prepare()` failures in low-rate Camera2 sessions |
 | Time-lapse X15 / X30 / X60 / X120 / X240 / X480 / X960 choices | 🟡 | choices map to capture intervals; output cadence unverified on hardware |
 | Time-lapse scene-specific speed suggestions | ⬜ | traffic/cloud/sunrise/night-sky hints absent |
 
@@ -274,7 +274,7 @@ unit-tested math component does not count as hardware feature parity.
 
 | Original item | Status | Evidence / Camera+ note |
 |---|---|---|
-| Portrait / Bokeh still mode | 🟡 | centre-weighted simulated blur, explicitly no depth map |
+| Portrait / Bokeh still mode | 🟡 | face-guided simulated blur when a face is detected; explicitly no depth map |
 | Adjustable bokeh / facula level | 🟡 | software blur-strength slider |
 | Portrait light-shape effects: Original / Velvet / Twist / Pentacle / Snowflake | ⬜ | `PresetConstant.PORTRAIT_EFFECT_ARRAY` |
 | Portrait beauty / smoothing / eye / face / whitening controls | 🚫 | proprietary face segmentation/retouch pipeline |
@@ -286,10 +286,10 @@ unit-tested math component does not count as hardware feature parity.
 | Automatic/forced night-scene detection | ⬜ | no scene detector or force-night toggle |
 | Night Lite / Turbo Night / front-night / UW-night variants | 🚫 | OEM capture pipeline, `TemplateTurboNightMode` |
 | Night zoom ranges up to 30x | ✅ | `ModeZoomPlan` NIGHT cap 30x |
-| Panorama sweep capture and stitch | 🟡 | translation-only correlation stitch; output downsampled |
+| Panorama sweep capture and stitch | 🟡 | three-band horizontal correlation stitch; output downsampled |
 | Panorama left/right direction guide | 🟡 | guide toggle; stitcher follows measured shifts |
 | Standard / Super panorama | ⬜ | no OEM quality mode |
-| Panorama capture line/speed/alignment warnings | ⬜ | basic frame count only; no live motion guidance |
+| Panorama capture line/speed/alignment warnings | 🟡 | gyro/accelerometer guide, speed warning and live accepted-frame alignment; device check pending |
 | Panorama-night / ArcSoft/morpho engine | 🚫 | original third-party/vendor pipeline not reproduced |
 | Super Macro / ~4cm close focus | 🟡 | Camera2 macro AF mode where advertised; no 4cm distance guarantee |
 | Tele-macro / Detail close-up | ⬜ | `ProductConfig.isSupportTeleMacro` |

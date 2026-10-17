@@ -190,6 +190,32 @@ class PortraitRendererTest {
     }
 
     @Test
+    fun faceGuidedShapeFollowsAnOffCentreFaceAndIncludesTheShoulders() {
+        val left = PortraitRenderer.faceGuidedShape(
+            width = 640,
+            height = 960,
+            faceCenterX = 180f,
+            faceCenterY = 250f,
+            eyeDistance = 60f,
+            level = 0.5f,
+        )
+        val lower = PortraitRenderer.faceGuidedShape(
+            width = 640,
+            height = 960,
+            faceCenterX = 460f,
+            faceCenterY = 500f,
+            eyeDistance = 60f,
+            level = 0.5f,
+        )
+
+        assertEquals(180f / 640f, left.centerXRatio, 1e-6f)
+        assertEquals(460f / 640f, lower.centerXRatio, 1e-6f)
+        assertTrue("mask is below the face to include the shoulders", left.centerYRatio > 250f / 960f)
+        assertTrue("the mask follows a lower face", lower.centerYRatio > left.centerYRatio)
+        assertTrue(left.radiusXRatio > 0f && left.radiusYRatio > 0f)
+    }
+
+    @Test
     fun theSameLevelKeepsTheSameFramingAtAnyResolution() {
         // Same aspect, double the size: ratios are resolution independent, so
         // the same share of the frame must come through sharp and unblurred.

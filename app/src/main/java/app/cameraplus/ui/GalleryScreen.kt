@@ -292,7 +292,7 @@ private fun Viewer(
 
                 item.isVideo -> Text(
                     text = "Tap to open in your video player",
-                    color = FaintWhite,
+                    color = White,
                     fontFamily = FontFamily.Monospace,
                     style = MaterialTheme.typography.bodyMedium,
                     modifier = Modifier.clickable { openExternally(context, item.uri, "video/*") },
@@ -300,13 +300,13 @@ private fun Viewer(
 
                 else -> Text(
                     text = "Could not load this item",
-                    color = FaintWhite,
+                    color = White,
                     fontFamily = FontFamily.Monospace,
                 )
             }
             Text(
                 text = "${java.text.DateFormat.getDateTimeInstance().format(java.util.Date(item.dateMillis))} · ${formatBytes(item.sizeBytes)}",
-                color = FaintWhite,
+                color = White,
                 fontFamily = FontFamily.Monospace,
                 fontSize = 10.sp,
                 modifier = Modifier
