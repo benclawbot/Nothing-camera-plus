@@ -126,6 +126,8 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
+import app.cameraplus.media.MediaLibrary
+import app.cameraplus.media.SystemGallery
 
 /** Modes shown in the selector. Null session modes use a separate pipeline. */
 enum class CameraMode(val label: String, val session: SessionMode?) {
@@ -210,6 +212,7 @@ fun CameraScreen() {
     var shutterPulse by remember { mutableIntStateOf(0) }
     var processingCapture by remember { mutableStateOf(false) }
     var status by remember { mutableStateOf<String?>(null) }
+    var lastMediaUri by remember { mutableStateOf<Uri?>(null) }
     var bokehLevel by remember { mutableFloatStateOf(capturePreferences.portraitBlurLevel) }
     val panoramaCapture = remember { PanoramaCapture() }
     var panoramaProgress by remember { mutableStateOf(panoramaCapture.progress()) }
@@ -278,6 +281,7 @@ fun CameraScreen() {
                 }
             },
             onClipFinished = { uri ->
+                if (uri != null) lastMediaUri = uri
                 status = if (uri != null) "Video saved" else "Recording did not produce a usable clip"
             },
         )
@@ -321,6 +325,66 @@ fun CameraScreen() {
             updateCaptureLocation(null)
             status = "Location permission denied"
         }
+    }
+
+    fun toggleGeotag() {
+        if (geotagEnabled) {
+            geotagEnabled = false
+            updateCaptureLocation(null)
+            status = "Geotagging off"
+            return
+        }
+        val fineGranted = ContextCompat.checkSelfPermission(
+            context,
+            Manifest.permission.ACCESS_FINE_LOCATION,
+        ) == PackageManager.PERMISSION_GRANTED
+        val coarseGranted = ContextCompat.checkSelfPermission(
+            context,
+            Manifest.permission.ACCESS_COARSE_LOCATION,
+        ) == PackageManager.PERMISSION_GRANTED
+        if (fineGranted || coarseGranted) {
+            geotagEnabled = true
+            requestCurrentLocation(context) { location ->
+                if (geotagEnabled) {
+                    updateCaptureLocation(location)
+                    if (location != null) status = "Geotagging enabled"
+                }
+            }
+        } else {
+            locationPermission.launch(
+                arrayOf(
+                    Manifest.permission.ACCESS_COARSE_LOCATION,
+                    Manifest.permission.ACCESS_FINE_LOCATION,
+                ),
+            )
+        }
+    }
+
+    fun applyCapturePreferences(options: CapturePreferences) {
+        flashChoice = options.flashChoice
+        photoAspectRatio = options.photoAspectRatio
+        photoResolution = if (capabilities.maximumPhotoResolutionSupported) {
+            options.photoResolution
+        } else {
+            PhotoResolution.STANDARD
+        }
+        videoQuality = options.videoQuality
+        videoFrameRate = options.videoFrameRate
+        selfTimer = options.selfTimer
+        mirrorCapture = options.mirrorCapture
+        shutterSoundEnabled = options.shutterSoundEnabled
+        volumeKeyShutter = options.volumeKeyShutter
+        touchShutter = options.touchShutter
+        photoHdrEnabled = options.photoHdrEnabled && capabilities.hdrExtensionAvailable
+        timeLapseSpeed = options.timeLapseSpeed
+        slowMotionFps = options.slowMotionFps
+        session.setFlashChoice(flashChoice) { error -> status = error.message }
+        session.setPhotoAspectRatio(photoAspectRatio) { error -> status = error.message }
+        session.setPhotoResolution(photoResolution) { error -> status = error.message }
+        videoQuality = session.setVideoQuality(videoQuality) { error -> status = error.message }
+        videoFrameRate = session.setVideoFrameRate(videoFrameRate) { error -> status = error.message }
+        session.setMirrorCaptureEnabled(mirrorCapture)
+        session.setShutterSoundEnabled(shutterSoundEnabled)
     }
 
     fun bindCameraX() {
@@ -506,7 +570,8 @@ fun CameraScreen() {
     fun captureNow() {
         session.capture(
             settings = processing,
-            onSaved = {
+            onSaved = { uri ->
+                lastMediaUri = uri
                 inFlight--
                 status = "Saved"
             },
@@ -543,7 +608,10 @@ fun CameraScreen() {
             width = width,
             height = height,
             namePrefix = name,
-            onSaved = { finishModeCapture("$note · saved ${width}×$height") },
+            onSaved = { uri ->
+                lastMediaUri = uri
+                finishModeCapture("$note · saved ${width}×$height")
+            },
             onError = { error ->
                 finishModeCapture(error.message ?: "Could not save $name capture")
             },
@@ -976,43 +1044,6 @@ fun CameraScreen() {
                 )
             }
             Row(verticalAlignment = Alignment.CenterVertically) {
-                ToggleChip(
-                    label = "GEO",
-                    active = geotagEnabled,
-                    enabled = !recording && !specialStarting,
-                    onClick = {
-                        if (geotagEnabled) {
-                            geotagEnabled = false
-                            updateCaptureLocation(null)
-                            status = "Geotagging off"
-                        } else {
-                            val fineGranted = ContextCompat.checkSelfPermission(
-                                context,
-                                Manifest.permission.ACCESS_FINE_LOCATION,
-                            ) == PackageManager.PERMISSION_GRANTED
-                            val coarseGranted = ContextCompat.checkSelfPermission(
-                                context,
-                                Manifest.permission.ACCESS_COARSE_LOCATION,
-                            ) == PackageManager.PERMISSION_GRANTED
-                            if (fineGranted || coarseGranted) {
-                                geotagEnabled = true
-                                requestCurrentLocation(context) { location ->
-                                    if (geotagEnabled) {
-                                        updateCaptureLocation(location)
-                                        if (location != null) status = "Geotagging enabled"
-                                    }
-                                }
-                            } else {
-                                locationPermission.launch(
-                                    arrayOf(
-                                        Manifest.permission.ACCESS_COARSE_LOCATION,
-                                        Manifest.permission.ACCESS_FINE_LOCATION,
-                                    ),
-                                )
-                            }
-                        }
-                    },
-                )
                 if (mode == CameraMode.PHOTO) {
                     ToggleChip(
                         label = "TIMER ${selfTimer.label}",
@@ -1036,10 +1067,13 @@ fun CameraScreen() {
                         tint = White,
                     )
                 }
-                IconButton(onClick = { showProcessing = true }) {
+                IconButton(
+                    enabled = !recording && !specialStarting,
+                    onClick = { showProcessing = true },
+                ) {
                     Icon(
                         imageVector = Icons.Outlined.Settings,
-                        contentDescription = "Processing settings",
+                        contentDescription = "Camera settings",
                         tint = White,
                     )
                 }
@@ -1105,62 +1139,6 @@ fun CameraScreen() {
                 .padding(bottom = 28.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
-            if (mode == CameraMode.PHOTO) {
-                PhotoCaptureOptions(
-                    aspectRatio = photoAspectRatio,
-                    resolution = photoResolution,
-                    maximumSupported = capabilities.maximumPhotoResolutionSupported,
-                    hdrEnabled = photoHdrEnabled,
-                    hdrSupported = capabilities.hdrExtensionAvailable,
-                    mirrorCapture = mirrorCapture,
-                    shutterSoundEnabled = shutterSoundEnabled,
-                    volumeKeyShutter = volumeKeyShutter,
-                    touchShutter = touchShutter,
-                    onAspectRatio = { selected ->
-                        photoAspectRatio = selected
-                        session.setPhotoAspectRatio(selected) { error ->
-                            status = error.message ?: "Could not change aspect ratio"
-                        }
-                    },
-                    onResolution = {
-                        val next = if (photoResolution == PhotoResolution.STANDARD) {
-                            PhotoResolution.MAXIMUM
-                        } else {
-                            PhotoResolution.STANDARD
-                        }
-                        photoResolution = next
-                        session.setPhotoResolution(next) { error ->
-                            status = error.message ?: "Could not change photo size"
-                        }
-                        if (next == PhotoResolution.MAXIMUM) {
-                            status = "MAX uses largest reported JPEG; not a vendor 50MP remosaic mode"
-                        }
-                    },
-                    onHdrToggle = {
-                        photoHdrEnabled = !photoHdrEnabled
-                        if (photoHdrEnabled) {
-                            rawEnabled = false
-                            isoGauge = 0f
-                            speedGauge = 0f
-                            focusGauge = 0f
-                        }
-                        session.setExtensionMode(
-                            if (photoHdrEnabled) ExtensionMode.HDR else ExtensionMode.NONE,
-                        ) { error -> status = error.message ?: "Could not toggle hardware HDR" }
-                    },
-                    onMirrorToggle = {
-                        mirrorCapture = !mirrorCapture
-                        session.setMirrorCaptureEnabled(mirrorCapture)
-                    },
-                    onShutterSoundToggle = {
-                        shutterSoundEnabled = !shutterSoundEnabled
-                        session.setShutterSoundEnabled(shutterSoundEnabled)
-                    },
-                    onVolumeKeyToggle = { volumeKeyShutter = !volumeKeyShutter },
-                    onTouchShutterToggle = { touchShutter = !touchShutter },
-                )
-                Spacer(Modifier.height(8.dp))
-            }
             if (!mode.usesCamera2Recorder) {
                 ZoomPill(
                     stops = capabilities.zoomStops.filter { it <= modeZoomMaximum + 0.01f },
@@ -1188,7 +1166,6 @@ fun CameraScreen() {
                         videoNoiseReductionEnabled = videoNoiseReductionEnabled,
                         videoNoiseReductionSupported = capabilities.videoNoiseReductionSupported,
                         micEnabled = micEnabled,
-                        quality = videoQuality,
                         frameRate = videoFrameRate,
                         supportedFrameRates = capabilities.supportedVideoFrameRates,
                         videoSnapshotSupported = capabilities.videoSnapshotSupported,
@@ -1247,25 +1224,13 @@ fun CameraScreen() {
                                 audioPermission.launch(Manifest.permission.RECORD_AUDIO)
                             }
                         },
-                        onQualityClick = {
-                            val next = videoQuality.next()
-                            videoQuality = session.setVideoQuality(next) { error ->
-                                status = error.message ?: "Could not change resolution"
-                            }
-                        },
-                        onFrameRateClick = {
-                            videoFrameRate = session.setVideoFrameRate(
-                                videoFrameRate.next(capabilities.supportedVideoFrameRates),
-                            ) { error ->
-                                status = error.message ?: "Could not change frame rate"
-                            }
-                        },
                         recording = recording,
                         onSnapshot = {
                             inFlight++
                             session.capture(
                                 settings = processing,
-                                onSaved = {
+                                onSaved = { uri ->
+                                    lastMediaUri = uri
                                     inFlight--
                                     status = "Video snapshot saved"
                                 },
@@ -1506,7 +1471,18 @@ fun CameraScreen() {
                 IconCircle(
                     imageVector = Icons.Outlined.PhotoLibrary,
                     contentDescription = "Gallery",
-                    onClick = { showGallery = true },
+                    onClick = {
+                        coroutineScope.launch {
+                            // Prefer what this session just saved; otherwise
+                            // the newest Camera+ item on disk.
+                            val target = lastMediaUri
+                                ?: MediaLibrary.recent(context, limit = 1).firstOrNull()?.uri
+                            if (!SystemGallery.open(context, target)) {
+                                // No gallery app on this device; keep ours.
+                                showGallery = true
+                            }
+                        }
+                    },
                 )
                 if (mode == CameraMode.VIDEO) {
                     RecordButton(
@@ -1586,8 +1562,33 @@ fun CameraScreen() {
                     processing = updated
                     store.save(updated)
                 },
+                capturePreferences = CapturePreferences(
+                    flashChoice = flashChoice,
+                    photoAspectRatio = photoAspectRatio,
+                    photoResolution = photoResolution,
+                    videoQuality = videoQuality,
+                    videoFrameRate = videoFrameRate,
+                    selfTimer = selfTimer,
+                    mirrorCapture = mirrorCapture,
+                    shutterSoundEnabled = shutterSoundEnabled,
+                    volumeKeyShutter = volumeKeyShutter,
+                    touchShutter = touchShutter,
+                    photoHdrEnabled = photoHdrEnabled,
+                    timeLapseSpeed = timeLapseSpeed,
+                    slowMotionFps = slowMotionFps,
+                    whiteBalance = whiteBalance,
+                    whiteBalanceKelvin = whiteBalanceKelvin,
+                    portraitBlurLevel = bokehLevel,
+                ),
+                supportedVideoFrameRates = capabilities.supportedVideoFrameRates,
+                maximumPhotoResolutionSupported = capabilities.maximumPhotoResolutionSupported,
+                screenFlashSupported = screenFlashAvailable,
+                hdrExtensionAvailable = capabilities.hdrExtensionAvailable,
+                onCapturePreferencesChange = ::applyCapturePreferences,
                 watermark = watermark,
                 onWatermarkChange = { watermark = it },
+                geotagEnabled = geotagEnabled,
+                onGeotagToggle = ::toggleGeotag,
                 onDismiss = { showProcessing = false },
             )
         }
@@ -1670,7 +1671,6 @@ private fun VideoChips(
     videoNoiseReductionEnabled: Boolean,
     videoNoiseReductionSupported: Boolean,
     micEnabled: Boolean,
-    quality: VideoQuality,
     frameRate: VideoFrameRate,
     supportedFrameRates: List<VideoFrameRate>,
     videoSnapshotSupported: Boolean,
@@ -1680,8 +1680,6 @@ private fun VideoChips(
     onNoiseReductionToggle: () -> Unit,
     onActionToggle: () -> Unit,
     onMicToggle: () -> Unit,
-    onQualityClick: () -> Unit,
-    onFrameRateClick: () -> Unit,
     onSnapshot: () -> Unit,
 ) {
     Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -1708,18 +1706,6 @@ private fun VideoChips(
             active = videoNoiseReductionEnabled,
             enabled = videoNoiseReductionSupported,
             onClick = onNoiseReductionToggle,
-        )
-        ToggleChip(
-            label = quality.label,
-            active = false,
-            enabled = true,
-            onClick = onQualityClick,
-        )
-        ToggleChip(
-            label = frameRate.label,
-            active = false,
-            enabled = supportedFrameRates.size > 1,
-            onClick = onFrameRateClick,
         )
         ToggleChip(
             label = "ACTION",
@@ -1986,86 +1972,6 @@ private fun RateSelector(
                     )
                 }
             }
-        }
-    }
-}
-
-@Composable
-private fun PhotoCaptureOptions(
-    aspectRatio: PhotoAspectRatio,
-    resolution: PhotoResolution,
-    maximumSupported: Boolean,
-    hdrEnabled: Boolean,
-    hdrSupported: Boolean,
-    mirrorCapture: Boolean,
-    shutterSoundEnabled: Boolean,
-    volumeKeyShutter: Boolean,
-    touchShutter: Boolean,
-    onAspectRatio: (PhotoAspectRatio) -> Unit,
-    onResolution: () -> Unit,
-    onHdrToggle: () -> Unit,
-    onMirrorToggle: () -> Unit,
-    onShutterSoundToggle: () -> Unit,
-    onVolumeKeyToggle: () -> Unit,
-    onTouchShutterToggle: () -> Unit,
-) {
-    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-        Text(
-            text = "ASPECT RATIO · MAX IS HARDWARE-DEPENDENT",
-            color = DimWhite,
-            fontFamily = FontFamily.Monospace,
-            style = MaterialTheme.typography.labelSmall,
-        )
-        Row(
-            modifier = Modifier
-                .padding(top = 5.dp)
-                .horizontalScroll(rememberScrollState()),
-            horizontalArrangement = Arrangement.spacedBy(5.dp),
-        ) {
-            PhotoAspectRatio.entries.forEach { option ->
-                ToggleChip(
-                    label = option.label,
-                    active = option == aspectRatio,
-                    enabled = true,
-                    onClick = { onAspectRatio(option) },
-                )
-            }
-            ToggleChip(
-                label = resolution.label,
-                active = resolution == PhotoResolution.MAXIMUM,
-                enabled = maximumSupported || resolution == PhotoResolution.MAXIMUM,
-                onClick = onResolution,
-            )
-            ToggleChip(
-                label = "HDR",
-                active = hdrEnabled,
-                enabled = hdrSupported,
-                onClick = onHdrToggle,
-            )
-            ToggleChip(
-                label = "MIRROR",
-                active = mirrorCapture,
-                enabled = true,
-                onClick = onMirrorToggle,
-            )
-            ToggleChip(
-                label = "SOUND",
-                active = shutterSoundEnabled,
-                enabled = true,
-                onClick = onShutterSoundToggle,
-            )
-            ToggleChip(
-                label = "VOL",
-                active = volumeKeyShutter,
-                enabled = true,
-                onClick = onVolumeKeyToggle,
-            )
-            ToggleChip(
-                label = "TOUCH",
-                active = touchShutter,
-                enabled = true,
-                onClick = onTouchShutterToggle,
-            )
         }
     }
 }

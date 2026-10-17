@@ -647,12 +647,14 @@ class CameraSession(
             override fun onCaptureStarted() = playShutterSound()
 
             override fun onCaptureSuccess(image: ImageProxy) {
-                val captured = runCatching {
-                    image.toJpegBytes() to image.imageInfo.rotationDegrees
-                }
+                // The HAL buffer's orientation is a property of the JPEG
+                // encoder, not of CameraX's rotation metadata (which the
+                // reference device's HAL does not honor); use the calibrated
+                // value every still path shares.
+                val captured = runCatching { image.toJpegBytes() }
                 image.close()
-                val jpeg = captured.getOrNull()?.first
-                val rotation = captured.getOrNull()?.second ?: 0
+                val jpeg = captured.getOrNull()
+                val rotation = uprightCaptureRotation()
                 if (jpeg == null) {
                     onError(
                         captured.exceptionOrNull()?.asException()
@@ -805,37 +807,31 @@ class CameraSession(
         onSaved: (Uri) -> Unit,
         onError: (Exception) -> Unit,
     ) {
-        val jpegEntry = createEntry() ?: run {
-            onError(IllegalStateException("Could not create a MediaStore entry"))
-            return
+        val name = "CameraPlus_${System.currentTimeMillis()}"
+        val jpegValues = ContentValues().apply {
+            put(MediaStore.Images.Media.DISPLAY_NAME, "$name.jpg")
+            put(MediaStore.Images.Media.MIME_TYPE, "image/jpeg")
+            put(MediaStore.Images.Media.RELATIVE_PATH, "Pictures/Camera+")
         }
-        val (jpegUri, jpegValues) = jpegEntry
-        val rawName = "CameraPlus_${System.currentTimeMillis()}.dng"
         val rawValues = ContentValues().apply {
-            put(MediaStore.Images.Media.DISPLAY_NAME, rawName)
+            put(MediaStore.Images.Media.DISPLAY_NAME, "$name.dng")
             put(MediaStore.Images.Media.MIME_TYPE, "image/x-adobe-dng")
             put(MediaStore.Images.Media.RELATIVE_PATH, "Pictures/Camera+")
         }
-        val rawUri = context.contentResolver
-            .insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, rawValues)
-        if (rawUri == null) {
-            context.contentResolver.delete(jpegUri, null, null)
-            onError(IllegalStateException("Could not create a DNG MediaStore entry"))
-            return
-        }
 
         val rawOptions = ImageCapture.OutputFileOptions
-            .Builder(context.contentResolver, rawUri, rawValues)
+            .Builder(context.contentResolver, MediaStore.Images.Media.EXTERNAL_CONTENT_URI, rawValues)
             .setMetadata(captureMetadata())
             .build()
         val jpegOptions = ImageCapture.OutputFileOptions
-            .Builder(context.contentResolver, jpegUri, jpegValues)
+            .Builder(context.contentResolver, MediaStore.Images.Media.EXTERNAL_CONTENT_URI, jpegValues)
             .setMetadata(captureMetadata())
             .build()
 
         var completed = false
         var rawSaved = false
         var jpegSavedUri: Uri? = null
+        var rawSavedUri: Uri? = null
         fun completeOnce(block: () -> Unit) {
             if (completed) return
             completed = true
@@ -854,17 +850,21 @@ class CameraSession(
                     // confirmed before telling the UI the pair is complete;
                     // the returned gallery item must always be the JPEG.
                     when (outputFileResults.imageFormat) {
-                        ImageFormat.RAW_SENSOR -> rawSaved = true
-                        ImageFormat.JPEG -> jpegSavedUri = outputFileResults.savedUri ?: jpegUri
+                        ImageFormat.RAW_SENSOR -> {
+                            rawSavedUri = outputFileResults.savedUri
+                            rawSaved = rawSavedUri != null
+                        }
+                        ImageFormat.JPEG -> jpegSavedUri = outputFileResults.savedUri
                     }
                     if (rawSaved && jpegSavedUri != null) {
-                        completeOnce { onSaved(jpegSavedUri ?: jpegUri) }
+                        fixUndefinedExifOrientation(jpegSavedUri!!)
+                        completeOnce { onSaved(jpegSavedUri!!) }
                     }
                 }
 
                 override fun onError(exception: ImageCaptureException) {
-                    context.contentResolver.delete(jpegUri, null, null)
-                    context.contentResolver.delete(rawUri, null, null)
+                    jpegSavedUri?.let { context.contentResolver.delete(it, null, null) }
+                    rawSavedUri?.let { context.contentResolver.delete(it, null, null) }
                     completeOnce { onError(exception) }
                 }
             },
@@ -889,25 +889,30 @@ class CameraSession(
         onSaved: (Uri) -> Unit,
         onError: (Exception) -> Unit,
     ) {
-        val entry = createEntry() ?: run {
-            onError(IllegalStateException("Could not create a MediaStore entry"))
-            return
+        val name = "CameraPlus_${System.currentTimeMillis()}"
+        val values = ContentValues().apply {
+            put(MediaStore.Images.Media.DISPLAY_NAME, "$name.jpg")
+            put(MediaStore.Images.Media.MIME_TYPE, "image/jpeg")
+            put(MediaStore.Images.Media.RELATIVE_PATH, "Pictures/Camera+")
         }
-        val (uri, values) = entry
         val options = ImageCapture.OutputFileOptions
-            .Builder(context.contentResolver, uri, values)
+            .Builder(context.contentResolver, MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values)
             .setMetadata(captureMetadata())
             .build()
         capture.takePicture(options, mainExecutor, object : ImageCapture.OnImageSavedCallback {
             override fun onCaptureStarted() = playShutterSound()
 
             override fun onImageSaved(outputFileResults: ImageCapture.OutputFileResults) {
-                onSaved(outputFileResults.savedUri ?: uri)
+                val uri = outputFileResults.savedUri
+                if (uri != null) {
+                    fixUndefinedExifOrientation(uri)
+                    onSaved(uri)
+                } else {
+                    onError(IllegalStateException("CameraX returned no saved MediaStore URI"))
+                }
             }
 
             override fun onError(exception: ImageCaptureException) {
-                // Do not leave a dangling empty entry behind.
-                context.contentResolver.delete(uri, null, null)
                 onError(exception)
             }
         })
@@ -946,6 +951,7 @@ class CameraSession(
                                 settings,
                                 out,
                                 mirrorHorizontal = shouldMirrorCapture(),
+                                rotationDegrees = uprightCaptureRotation(),
                                 watermark = watermarkOptions,
                                 location = captureLocation,
                             )
@@ -955,6 +961,8 @@ class CameraSession(
                             // low memory). Keep the shot, write the original.
                             resolver.openOutputStream(uri)?.use { it.write(jpeg) }
                                 ?: throw IllegalStateException("Could not write the capture")
+                            // Original HAL pixels went to disk: fix the tag too.
+                            fixUndefinedExifOrientation(uri)
                             mainExecutor.execute {
                                 onNote("Saved without optional processing/watermark — frame too large")
                             }
@@ -1520,6 +1528,55 @@ class CameraSession(
     private fun captureMetadata(): ImageCapture.Metadata = ImageCapture.Metadata().apply {
         setReversedHorizontal(shouldMirrorCapture())
         captureLocation?.let { setLocation(it) }
+    }
+
+    /**
+     * Clockwise rotation, in degrees, that turns a raw capture of the current
+     * lens into an upright image.
+     *
+     * Calibrated against real captures on the reference device (Nothing A001,
+     * MediaTek HAL): technically/textually upright photos taken in portrait
+     * come back as landscape buffers that need 270° clockwise, not the 90°
+     * the sensor metadata alone would suggest. The app is portrait-locked, so
+     * no display-rotation term is needed. Re-verify with a text target when
+     * testing on another device or lens.
+     */
+    private fun uprightCaptureRotation(): Int = when (lensFacing) {
+        CameraSelector.LENS_FACING_FRONT -> 90
+        else -> 270
+    }
+
+    private fun exifOrientationForCapture(): Int = when (uprightCaptureRotation()) {
+        90 -> ExifInterface.ORIENTATION_ROTATE_90
+        180 -> ExifInterface.ORIENTATION_ROTATE_180
+        270 -> ExifInterface.ORIENTATION_ROTATE_270
+        else -> ExifInterface.ORIENTATION_NORMAL
+    }
+
+    /**
+     * The HAL leaves JPEGs saved straight through CameraX with an undefined
+     * (0) orientation tag, so every gallery shows them sideways. Replace it
+     * with the calibrated rotation, but only when it is missing/invalid —
+     * never fight a correct value the pipeline already wrote. Call only for
+     * files whose pixels were NOT rotated in software.
+     */
+    private fun fixUndefinedExifOrientation(uri: Uri) {
+        runCatching {
+            context.contentResolver.openFileDescriptor(uri, "rw")?.use { descriptor ->
+                val exif = ExifInterface(descriptor.fileDescriptor)
+                val current = exif.getAttributeInt(
+                    ExifInterface.TAG_ORIENTATION,
+                    ExifInterface.ORIENTATION_UNDEFINED,
+                )
+                if (current !in 1..8) {
+                    exif.setAttribute(
+                        ExifInterface.TAG_ORIENTATION,
+                        exifOrientationForCapture().toString(),
+                    )
+                    exif.saveAttributes()
+                }
+            }
+        }
     }
 
     private fun playShutterSound() {

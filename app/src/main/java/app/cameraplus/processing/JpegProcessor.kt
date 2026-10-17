@@ -43,6 +43,7 @@ object JpegProcessor {
         settings: ProcessingSettings,
         out: OutputStream,
         mirrorHorizontal: Boolean = false,
+        rotationDegrees: Int = 0,
         watermark: WatermarkOptions = WatermarkOptions(),
         location: Location? = null,
     ): Boolean {
@@ -65,6 +66,9 @@ object JpegProcessor {
             null
         } ?: return false
         return try {
+            // Captures arrive in sensor orientation; orient once, up front,
+            // so the look passes, watermark and encode all work upright.
+            bitmap = orient(bitmap, rotationDegrees, mirrorHorizontal)
             val width = bitmap.width
             val height = bitmap.height
             if (width.toLong() * height.toLong() > maxPixels) return false
@@ -73,22 +77,7 @@ object JpegProcessor {
                 val pixels = IntArray(width * height)
                 bitmap.getPixels(pixels, 0, width, 0, 0, width, height)
                 ImageProcessor.apply(pixels, width, height, settings)
-                if (mirrorHorizontal) ImageProcessor.mirrorHorizontally(pixels, width, height)
                 bitmap.setPixels(pixels, 0, width, 0, 0, width, height)
-            } else if (mirrorHorizontal) {
-                val mirrored = Bitmap.createBitmap(
-                    bitmap,
-                    0,
-                    0,
-                    width,
-                    height,
-                    Matrix().apply { postScale(-1f, 1f) },
-                    true,
-                )
-                if (mirrored !== bitmap) {
-                    bitmap.recycle()
-                    bitmap = mirrored
-                }
             }
             WatermarkRenderer.draw(bitmap, watermark, location)
 
@@ -99,6 +88,30 @@ object JpegProcessor {
         } finally {
             bitmap.recycle()
         }
+    }
+
+    /** Rotates (clockwise degrees) and mirrors in one pass when needed. */
+    private fun orient(bitmap: Bitmap, rotationDegrees: Int, mirrorHorizontal: Boolean): Bitmap {
+        val normalized = ((rotationDegrees % 360) + 360) % 360
+        if (normalized == 0 && !mirrorHorizontal) return bitmap
+        val matrix = Matrix().apply {
+            if (normalized != 0) postRotate(normalized.toFloat())
+            if (mirrorHorizontal) postScale(-1f, 1f)
+        }
+        val transformed = Bitmap.createBitmap(
+            bitmap,
+            0,
+            0,
+            bitmap.width,
+            bitmap.height,
+            matrix,
+            true,
+        )
+        if (transformed !== bitmap) {
+            bitmap.recycle()
+            return transformed
+        }
+        return bitmap
     }
 
     /** Mutable ARGB decode so the pixels can be edited in place. */

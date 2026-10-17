@@ -46,6 +46,16 @@
 - [ ] On the target phone, verify Camera2 high-speed session support and slow-motion playback.
 - [ ] On the target phone, verify time-lapse cadence, output orientation and storage visibility.
 - [ ] Inspect portrait/night/panorama output quality and peak memory on-device.
+- [ ] Verify still orientation calibration for the front camera and for mirrored selfies
+      (the back-camera mapping, 270° CW, is confirmed by ON-device capture; front is provisional).
+- [ ] Verify night/portrait/panorama output orientation (ARGB pipeline now uses the same
+      calibrated rotation as stills).
+- [ ] Verify video playback orientation for both recording paths (CameraX video and the
+      Camera2 high-speed/time-lapse recorder); adjust the recorder hint if 180° off.
+- [ ] Verify the gallery hand-off on Nothing OS: the review action should land in the
+      default gallery app (no chooser), and the app should be fullscreen with no status bar.
+- [ ] Delete the two 0-byte MediaStore leftovers from the pre-fix capture path
+      (`CameraPlus_1792175441365.jpg`, `CameraPlus_1792176319016.jpg`).
 
 ## Status log
 
@@ -53,3 +63,14 @@
   is in `FEATURE-COVERAGE.md`.
 - 2026-10-16: code changes build successfully; 178 JVM tests pass. No physical device is
   connected, so camera behavior, actual latency and image quality remain unverified.
+- 2026-10-17: first on-device pass (Nothing A001): menus restructured into the categorized
+  camera-settings sheet. Found and fixed a real bug — CameraX `OutputFileOptions.Builder`
+  takes a collection URI, not an inserted item URI; still/RAW saves had produced 0-byte
+  files. A standard capture now saves a real 967 KB JPEG.
+- 2026-10-17: EXIF audit of a pulled capture showed the HAL writes orientation tag 0
+  (undefined) with sideways pixels. Fixes: calibrated rotation (back 270° CW), post-save
+  EXIF tag repair for file-path saves, and the same rotation applied in the processed
+  (JpegProcessor) and ARGB (night/portrait/panorama) pipelines.
+- 2026-10-17: gallery button now hands off to the device gallery app (AOSP review action
+  pinned to the system gallery) with the in-app grid as fallback; the activity is now
+  fullscreen (status bar hidden) like the original camera theme.

@@ -129,7 +129,7 @@ Status legend:
 |---|---|---|
 | Processing sheet (tone/skin/sharp/…) | ✅ | Includes clean-room Natural/B&W/Warm/Cool/Vivid/Vintage looks |
 | Volume-key and touch shutter | 🟡 | opt-in still capture; smile shutter is not implemented |
-| In-app gallery (recent Camera+ media, photo viewer, share) | 🟡 | Camera+ items: view/share/favorite/delete/date/size; video opens in system player |
+| In-app gallery (recent Camera+ media, photo viewer, share) | 🟡 | thumbnail opens the device's gallery app on the newest item (review hand-off); in-app grid/viewer remains as fallback with view/share/favorite/delete |
 | Tap-to-focus/meter | 🟡 | CameraX metering action; hardware behavior unverified |
 | Viewfinder exposure-compensation control | 🟡 | EV slider wired to CameraX; hardware behavior unverified |
 | Long-press focus/meter lock | 🟡 | long-duration metering action; hardware behavior unverified |
@@ -287,7 +287,7 @@ unit-tested math component does not count as hardware feature parity.
 | Watermark on/off and logo/time/date/location/author options | 🟡 | software text stamp; camera parameters and original artwork/style absent |
 | Glyph mirror preference | ⬜ | `glyph_mirror` |
 | QR-code scanning | ✅ | local ZXing QR analyzer with open/copy actions; not every barcode type |
-| In-app recent gallery and photo viewer | 🟡 | Camera+ MediaStore grid/viewer/share implemented; not a general device gallery |
+| In-app recent gallery and photo viewer | 🟡 | gallery button hands off to the system gallery app (newest item); in-app grid/viewer kept as the no-gallery-app fallback |
 | In-app video playback | ⬜ | video opens in a system player instead |
 | Gallery delete/favorite/info actions | 🟡 | delete/favorite/date/size implemented; crop/rotate/editor absent |
 | Motion-photo playback in gallery | 🚫 | motion photo capture absent |

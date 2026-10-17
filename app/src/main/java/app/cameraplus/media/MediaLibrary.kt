@@ -101,13 +101,17 @@ object MediaLibrary {
                 buildList {
                     while (cursor.moveToNext() && size < limit) {
                         val id = cursor.getLong(idColumn)
+                        val bytes = cursor.getLong(sizeColumn)
+                        // Failed saves leave 0-byte rows behind; do not show
+                        // them as broken tiles in the grid.
+                        if (bytes <= 0) continue
                         add(
                             Item(
                                 uri = ContentUris.withAppendedId(collection, id),
                                 isVideo = isVideo,
                                 displayName = cursor.getString(nameColumn) ?: "Camera+",
                                 dateMillis = cursor.getLong(dateColumn) * 1000L,
-                                sizeBytes = cursor.getLong(sizeColumn),
+                                sizeBytes = bytes,
                                 isFavorite = favoriteColumn >= 0 && cursor.getInt(favoriteColumn) != 0,
                             ),
                         )
