@@ -1,104 +1,122 @@
 package app.cameraplus.media
 
+import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
-import android.content.pm.PackageManager
+import android.content.pm.ResolveInfo
 import android.net.Uri
 
 /**
  * Hands a just-captured item to the device's gallery app the way stock
  * cameras do, instead of showing an in-app interstitial first.
  *
- * Order of attempts (first one that resolves wins):
- *  1. The AOSP camera review action, pinned to the system's designated
- *     gallery app (`CATEGORY_APP_GALLERY`), data = the newest capture.
- *  2. The same review action, unpinned, but only when it resolves to a
- *     single app (never the chooser).
- *  3. Plain `ACTION_VIEW`, again only when unambiguous.
- *  4. The gallery app's home screen (no item).
+ * Resolution order (first hit wins):
+ *  1. The user's default handler for the AOSP camera review action.
+ *  2. A system gallery app that accepts the review action.
+ *  3. Any app that accepts the review action (that action is camera-specific,
+ *     so its handlers are viewers by construction).
+ *  4. Whatever the user has set as the plain viewer, or a gallery app, for
+ *     viewing the item.
+ *  5. The gallery app's home screen (when there is no item yet, or nothing
+ *     claimed the review/view intents).
  *
- * Returns `false` when nothing could take any of those, so the caller can
- * keep its own viewer as the last resort.
+ * The system chooser is never used: a chooser is exactly the "something
+ * intermediate" this helper exists to avoid. Every step resolves to one
+ * concrete activity, and this returns `false` when nothing fit, so callers
+ * can keep their own viewer as the last resort.
+ *
+ * Apps are picked because the system says they are galleries / review
+ * viewers, never by hardcoding vendor package names.
  */
 object SystemGallery {
 
     /**
      * AOSP camera review action; the interop action gallery apps accept for
-     * "just captured this, show it" (see Android's Camera app / CDD flows).
+     * "just captured this, show it".
      */
     private const val ACTION_REVIEW = "com.android.camera.action.REVIEW"
 
-    /**
-     * Opens the gallery for [uri] (or the gallery home when it is null).
-     * Must be called from an activity context.
-     */
+    /** Opens the gallery at [uri], or the gallery home when [uri] is null. */
     fun open(context: Context, uri: Uri?): Boolean {
-        val galleryPackage = resolveGalleryPackage(context)
+        val galleries = queryHandlers(context, galleryHome())
+            .mapNotNull { it.activityInfo?.packageName }
+            .toSet()
+
         if (uri != null) {
             val mime = context.contentResolver.getType(uri) ?: "*/*"
-            val review = reviewIntent(uri, mime)
-            if (galleryPackage != null && resolvesToPackage(context, review, galleryPackage)) {
-                return start(context, review.setPackage(galleryPackage))
+
+            val review = Intent(ACTION_REVIEW).apply {
+                setDataAndType(uri, mime)
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
             }
-            if (resolvesDirectly(context, review)) {
-                return start(context, review)
+            defaultHandler(context, review)?.let {
+                if (launch(context, review, it)) return true
             }
+            pick(queryHandlers(context, review), galleries, requireGallery = false)?.let {
+                if (launch(context, review, it)) return true
+            }
+
             val view = Intent(Intent.ACTION_VIEW).apply {
                 setDataAndType(uri, mime)
                 addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
             }
-            if (resolvesDirectly(context, view)) {
-                return start(context, view)
+            defaultHandler(context, view)?.let {
+                if (launch(context, view, it)) return true
+            }
+            // Plain VIEW is claimed by far more than galleries (editors, chat
+            // apps, …), so only ever aim it at something that is also a
+            // gallery app.
+            pick(queryHandlers(context, view), galleries, requireGallery = true)?.let {
+                if (launch(context, view, it)) return true
             }
         }
-        if (galleryPackage != null) {
-            val home = galleryHomeIntent().setPackage(galleryPackage)
-            if (resolvesToPackage(context, home, galleryPackage)) {
-                return start(context, home)
-            }
+
+        val home = galleryHome()
+        defaultHandler(context, home)?.let {
+            if (launch(context, home, it)) return true
+        }
+        pick(queryHandlers(context, home), galleries, requireGallery = false)?.let {
+            if (launch(context, home, it)) return true
         }
         return false
     }
 
-    private fun reviewIntent(uri: Uri, mime: String): Intent =
-        Intent(ACTION_REVIEW).apply {
-            setDataAndType(uri, mime)
-            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-        }
-
-    private fun galleryHomeIntent(): Intent =
+    private fun galleryHome(): Intent =
         Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_APP_GALLERY)
 
-    /** The system's designated gallery app, or null when it has none. */
-    private fun resolveGalleryPackage(context: Context): String? =
-        runCatching {
-            context.packageManager.resolveActivity(
-                galleryHomeIntent(),
-                PackageManager.MATCH_DEFAULT_ONLY,
-            )?.activityInfo?.packageName
-        }.getOrNull()
-
-    private fun resolvesToPackage(context: Context, intent: Intent, packageName: String): Boolean =
-        runCatching {
-            context.packageManager.resolveActivity(intent, 0)?.activityInfo?.packageName == packageName
-        }.getOrDefault(false)
+    /** Every activity the system would offer for [intent], in its order. */
+    private fun queryHandlers(context: Context, intent: Intent): List<ResolveInfo> =
+        runCatching { context.packageManager.queryIntentActivities(intent, 0) }
+            .getOrDefault(emptyList())
 
     /**
-     * True only when the intent hits one real app; a default-less implicit
-     * intent resolves to the system chooser instead, which is exactly the
-     * "something intermediate" this helper exists to avoid.
+     * The handler the system would use without asking: a user-set default.
+     * A default-less implicit intent resolves to the system chooser instead,
+     * which is not a handler.
      */
-    private fun resolvesDirectly(context: Context, intent: Intent): Boolean =
-        runCatching {
-            val info = context.packageManager.resolveActivity(intent, 0)?.activityInfo
-            info != null &&
-                info.packageName != "android" &&
-                !info.name.contains("ResolverActivity")
-        }.getOrDefault(false)
+    private fun defaultHandler(context: Context, intent: Intent): ResolveInfo? {
+        val resolved = context.packageManager.resolveActivity(intent, 0) ?: return null
+        val info = resolved.activityInfo ?: return null
+        val isChooser = info.packageName == "android" || info.name.contains("ResolverActivity")
+        return if (isChooser) null else resolved
+    }
 
-    private fun start(context: Context, intent: Intent): Boolean =
-        runCatching {
-            context.startActivity(intent)
+    private fun pick(
+        handlers: List<ResolveInfo>,
+        galleries: Set<String>,
+        requireGallery: Boolean,
+    ): ResolveInfo? {
+        handlers.firstOrNull { it.activityInfo?.packageName in galleries }?.let { return it }
+        return if (requireGallery) null else handlers.firstOrNull()
+    }
+
+    private fun launch(context: Context, intent: Intent, target: ResolveInfo): Boolean {
+        val info = target.activityInfo ?: return false
+        val explicit = Intent(intent)
+            .setComponent(ComponentName(info.packageName, info.name))
+        return runCatching {
+            context.startActivity(explicit)
             true
         }.getOrDefault(false)
+    }
 }
