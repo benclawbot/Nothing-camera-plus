@@ -87,3 +87,14 @@
   capture regression: 1.02 MB JPEG, orientation tag 8. The two 0-byte ghost rows were
   deleted from MediaStore. 178 JVM tests pass.
 - 2026-10-17: released v1.1.0 (debug APK attached to the GitHub release).
+- 2026-10-17: subject tracking shipped (commit 3c087aa): top-bar toggle, tap to lock a
+  subject, zero-mean NCC tracker on ~192px upright luma frames, AF/AE metering follows
+  the tracked point (re-meter after 1.2% view movement, 2.5 s keep-alive, suspended when
+  confidence drops, cancelled on clear). Analysis stream binds only while tracking is
+  armed, with a recovery ladder that keeps the camera usable if the extra stream cannot
+  bind. On-device verified in photo, video and front camera: selection mapping matches the
+  predicted view→frame math to the pixel, 15 Hz updates at 0.999 confidence, metering
+  keep-alive cadence exact, no crashes. 188 JVM tests pass (10 new).
+- 2026-10-17: coverage audit re-verified every row of notes/FEATURE-COVERAGE.md against
+  the sources; stale rows corrected (touch shutter, screen flash, night 30x / portrait 4x
+  zoom caps, B&W look) and the remaining gaps listed with effort estimates.

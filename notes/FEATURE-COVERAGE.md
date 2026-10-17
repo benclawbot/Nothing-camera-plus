@@ -3,11 +3,50 @@
 Ground truth mined from the decompiled original (`~/nothing-camera-reversed`,
 `strings.xml`, `arrays.xml`, `camera_preferences_global.xml`, `jadx/sources`).
 
+Audit pass 2026-10-17: every ✅/🟡/⬜ below was re-checked against the current
+`app/` sources and stale rows were corrected (touch shutter, screen flash,
+per-mode zoom caps, night 30x / portrait 4x zoom, B&W look). Subject tracking
+was added in the same pass. Remaining gaps are called out under "Audit
+results" right below.
+
 Status legend:
 - ✅ done
 - 🟡 partial / approximation
 - ⬜ not built yet
 - 🚫 vendor-proprietary, clean-room substitute only (never original code)
+
+---
+
+## Audit results (2026-10-17)
+
+Closed since the last pass: touch shutter, screen flash, per-mode zoom caps
+(night 30x, portrait/macro 4x, slo-mo 2x, time-lapse 10x, panorama 1x), B&W
+look, and the new subject tracking.
+
+Genuine remaining gaps (clean-room implementable):
+
+| Gap | Effort | Note |
+|---|---|---|
+| Expert histogram / pro meter | medium | needs live luma statistics in the viewfinder |
+| Restore defaults | small | no global settings screen yet |
+| Default-gallery picker / user save position | small | gallery hand-off resolves packages dynamically today |
+| Focal-length labels (14/24/35mm…) | small | zoom chips show ratios only |
+| Launcher mode shortcuts | small | needs `res/xml/shortcuts.xml` + intent handling |
+| Long-press shutter (continuous shot / video from photo) | small | shutter has no long-press action yet |
+| Watermark camera-parameters line | small | date/time/location/author already ship |
+| In-app video playback | medium | videos hand off to the system player |
+| Video encoder picker (H.264 / H.265) | medium | CameraX Recorder picks the codec; Camera2 recorder path needed |
+| Video HDR / SHDR toggles | medium | device/extension dependent |
+| Night video mode | medium | |
+| Anti-flicker (50/60 Hz) control | small | Camera2 interop |
+| Slow-motion mute/snapshot rules, time-lapse scene hints | small | cosmetic |
+| Modes editor / reordering | small | cosmetic |
+
+Vendor-only (🚫, not reproducible as-is): beauty-video pipeline, AI scene
+detection, gender estimate, glyph/LED flash and glyph mirror, Morpho/Tetras
+LUT packs, motion photo, Ultra HDR / Ultra XDR, 50MP remosaic, super
+resolution, TurboNight variants, tele-macro, portrait depth segmentation,
+ArcSoft/morpho panorama, smile shutter (vendor face ML).
 
 ---
 
@@ -128,7 +167,7 @@ Status legend:
 | Feature | Camera+ | Note |
 |---|---|---|
 | Processing sheet (tone/skin/sharp/…) | ✅ | Includes clean-room Natural/B&W/Warm/Cool/Vivid/Vintage looks |
-| Volume-key and touch shutter | 🟡 | opt-in still capture; smile shutter is not implemented |
+| Volume-key and touch shutter | ✅ | both toggles ship in the processing sheet and are applied to their gestures; smile shutter is not implemented |
 | In-app gallery (recent Camera+ media, photo viewer, share) | 🟡 | thumbnail opens the device's gallery app on the newest item (review hand-off); in-app grid/viewer remains as fallback with view/share/favorite/delete |
 | Tap-to-focus/meter | 🟡 | CameraX metering action; hardware behavior unverified |
 | Viewfinder exposure-compensation control | 🟡 | EV slider wired to CameraX; hardware behavior unverified |
@@ -195,7 +234,7 @@ unit-tested math component does not count as hardware feature parity.
 | RAW + companion JPEG / DNG | 🟡 | correct CameraX overload implemented; actual device capability/output unverified |
 | Flash Off / On / Auto | ✅ | CameraX OFF/AUTO/ON; hardware behavior unverified |
 | Steady torch | ✅ | torch available in Video mode |
-| Screen flash / Glyph flash / LED variants | ⬜ | `ScreenFlashManager`, glyph flash strings |
+| Screen flash / Glyph flash / LED variants | 🟡 | ScreenFlashView screen flash cycles with the flash button; Glyph/LED flash variants are vendor hardware |
 | Self timer Off / 3s / 10s | ✅ | |
 | Grid / mesh-line options | 🟡 | guide cycle exists; not all original mesh variants |
 | Leveler / gradienter | ✅ | gravity-driven horizon line |
@@ -226,7 +265,7 @@ unit-tested math component does not count as hardware feature parity.
 | Video snapshot while recording | 🟡 | concurrent CameraX still use case with video-only fallback; device support unverified |
 | Slow motion 1080p120/240/480 and 4K120 | 🟡 | dynamically enumerates high-speed rates up to 1080p; 4K120 is not offered |
 | Slow-motion supported-rate picker | 🟡 | device-reported rate picker; needs hardware validation |
-| Slow-motion zoom cap and mute/snapshot rules | ⬜ | no mode-specific zoom cap or snapshot action |
+| Slow-motion zoom cap and mute/snapshot rules | 🟡 | 2x zoom cap implemented (`ModeZoomPlan`); mute/snapshot rules absent |
 | Time lapse 1080p / 4K choice | 🟡 | picks largest MediaRecorder size; no user resolution selector |
 | Time-lapse X15 / X30 / X60 / X120 / X240 / X480 / X960 choices | 🟡 | choices map to capture intervals; output cadence unverified on hardware |
 | Time-lapse scene-specific speed suggestions | ⬜ | traffic/cloud/sunrise/night-sky hints absent |
@@ -240,13 +279,13 @@ unit-tested math component does not count as hardware feature parity.
 | Portrait light-shape effects: Original / Velvet / Twist / Pentacle / Snowflake | ⬜ | `PresetConstant.PORTRAIT_EFFECT_ARRAY` |
 | Portrait beauty / smoothing / eye / face / whitening controls | 🚫 | proprietary face segmentation/retouch pipeline |
 | Gender estimate UI | ⬜ | `pref_gender_estimate_key` |
-| Portrait optical zoom 1x–4x | ⬜ | regular lens zoom only |
+| Portrait optical zoom 1x–4x | ✅ | `ModeZoomPlan` caps portrait at 4x |
 | Front portrait / portrait repair | ⬜ | `PortraitRepairMode` |
 | Dual/single-camera portrait bokeh and shine tuning | 🚫 | OEM depth and ISP implementation absent |
 | Night photo mode / multi-frame merge | 🟡 | 4-frame software alignment/merge at bounded resolution |
 | Automatic/forced night-scene detection | ⬜ | no scene detector or force-night toggle |
 | Night Lite / Turbo Night / front-night / UW-night variants | 🚫 | OEM capture pipeline, `TemplateTurboNightMode` |
-| Night zoom ranges up to 30x | ⬜ | no mode-specific ceiling |
+| Night zoom ranges up to 30x | ✅ | `ModeZoomPlan` NIGHT cap 30x |
 | Panorama sweep capture and stitch | 🟡 | translation-only correlation stitch; output downsampled |
 | Panorama left/right direction guide | 🟡 | guide toggle; stitcher follows measured shifts |
 | Standard / Super panorama | ⬜ | no OEM quality mode |
@@ -270,6 +309,7 @@ unit-tested math component does not count as hardware feature parity.
 | Tap-to-focus and tap-to-meter | 🟡 | CameraX combined AF/AE action; hardware behavior unverified |
 | Long-press AF/AE lock | 🟡 | long-duration metering action; hardware behavior unverified |
 | On-viewfinder brightness/EV slider | 🟡 | CameraX exposure-compensation index; hardware behavior unverified |
+| Subject tracking (tap a subject, focus follows it) | ✅ | clean-room zero-mean NCC tracker (2026-10-17); top-bar toggle, reticle overlay, AF/AE metering follows the subject in photo modes and video; device-verified coordinate mapping and metering cadence |
 | Expert histogram and level meter | ⬜ | composition level exists, but no histogram or Pro meter |
 | Lens stops from physical focal lengths (0.6x/1x/2x/…) | 🟡 | planner handles logical and separate cameras; actual phone inventory unverified |
 | Pinch-to-zoom and manual zoom across device range | 🟡 | implemented and clamped; range depends on hardware |
@@ -283,7 +323,7 @@ unit-tested math component does not count as hardware feature parity.
 | Auto/Vivid/Natural color-mode picker and scene descriptions | 🟡 | general processing settings exist; original scene-driven mode is absent |
 | Morpho/Tetras filter packs and filter-strength picker | 🚫 | vendor renderers/assets intentionally excluded |
 | User LUT import / presets and preset sharing | ⬜ | no LUT import/export yet |
-| Black-and-white filter | ⬜ | no dedicated filter toggle |
+| Black-and-white filter | ✅ | clean-room B&W look in the processing sheet |
 | Watermark on/off and logo/time/date/location/author options | 🟡 | software text stamp; camera parameters and original artwork/style absent |
 | Glyph mirror preference | ⬜ | `glyph_mirror` |
 | QR-code scanning | ✅ | local ZXing QR analyzer with open/copy actions; not every barcode type |
@@ -293,7 +333,7 @@ unit-tested math component does not count as hardware feature parity.
 | Motion-photo playback in gallery | 🚫 | motion photo capture absent |
 | Shutter sound toggle | ✅ | MediaActionSound toggle; hardware/region policy may override |
 | Volume-key still shutter | ✅ | explicit opt-in and only while enabled |
-| Touch / smile shutter | ⬜ | `pref_shutter_touch_key`, `pref_shutter_smile_key` |
+| Touch / smile shutter | 🟡 | touch shutter ships as a ProcessingSheet toggle and captures on preview taps; smile shutter absent |
 | Save-position / default-gallery selection | ⬜ | app currently writes to Camera+ MediaStore folders |
 | Anti-flicker, exposure-metering, dehaze/distortion controls | ⬜ | advanced vendor settings not implemented |
 | Restore defaults | ⬜ | no global settings screen yet |
