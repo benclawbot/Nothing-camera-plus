@@ -34,6 +34,8 @@ data class SessionCapabilities(
     val evStep: Float = 1f / 3f,
     val supportedVideoFrameRates: List<VideoFrameRate> = listOf(VideoFrameRate.FPS_30),
     val maximumPhotoResolutionSupported: Boolean = false,
+    /** CameraX reports JPEG_R / Ultra HDR as an ImageCapture output format. */
+    val ultraHdrPhotoSupported: Boolean = false,
     val portraitExtensionAvailable: Boolean = false,
     val nightExtensionAvailable: Boolean = false,
     val hdrExtensionAvailable: Boolean = false,

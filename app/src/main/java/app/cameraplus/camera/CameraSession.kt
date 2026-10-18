@@ -13,6 +13,7 @@ import android.location.Location
 import android.media.MediaActionSound
 import android.os.Handler
 import android.os.Looper
+import android.os.Build
 import android.hardware.camera2.CameraCharacteristics
 import android.hardware.camera2.CameraManager
 import android.hardware.camera2.CaptureRequest
@@ -26,6 +27,8 @@ import android.util.Size
 import android.view.OrientationEventListener
 import android.view.Surface
 import androidx.camera.camera2.interop.Camera2CameraInfo
+import androidx.camera.camera2.interop.Camera2CameraControl
+import androidx.camera.camera2.interop.CaptureRequestOptions
 import androidx.camera.camera2.interop.Camera2Interop
 import androidx.camera.core.Camera
 import androidx.camera.core.CameraFilter
@@ -237,6 +240,11 @@ class CameraSession(
     private var availableAntiBandingModes: List<AntiBanding> = listOf(AntiBanding.AUTO)
     private var stillQuality = StillQuality.FAST
     private var availableStillQuality: List<StillQuality> = StillQuality.entries
+    private var ultraHdrRequested = false
+    private var ultraHdrCompatible = false
+    private var ultraHdrSupported = false
+    private var ultraHdrActive = false
+    private var multiFrameCaptureActive = false
     private var barcodeScanning = BarcodeScanning.QR_ONLY
     private var stripMetadata = false
     private var exifAuthor: String? = null
@@ -1053,12 +1061,102 @@ class CameraSession(
     fun currentStillQuality(): StillQuality = stillQuality
 
     /**
+     * Requests CameraX's public JPEG_R output when available. Software pixel
+     * processing, watermarking, mirroring and auto-leveling are incompatible
+     * with preserving the Ultra HDR gain map, so the caller supplies whether
+     * the current capture configuration is a lossless path.
+     */
+    fun setUltraHdrEnabled(
+        enabled: Boolean,
+        compatible: Boolean,
+        rebindIfChanged: Boolean = true,
+        onError: (Exception) -> Unit = {},
+    ) {
+        val oldActive = ultraHdrActive
+        ultraHdrRequested = enabled
+        ultraHdrCompatible = compatible
+        val nextActive = enabled && compatible && ultraHdrSupported &&
+            !rawMode.enabled && mode != SessionMode.VIDEO
+        ultraHdrActive = nextActive
+        if (rebindIfChanged && oldActive != nextActive && mode != SessionMode.VIDEO) rebind(onError)
+    }
+
+    fun isUltraHdrActive(): Boolean = ultraHdrActive
+
+    /** Applies temporary focus distance without rebuilding the camera session. */
+    fun setFocusDistanceForBracket(diopters: Float, onComplete: (Exception?) -> Unit) {
+        val camera = boundCamera
+        if (camera == null || !diopters.isFinite()) {
+            onComplete(IllegalStateException("Manual focus is unavailable"))
+            return
+        }
+        val options = CaptureRequestOptions.Builder()
+            .setCaptureRequestOption(
+                CaptureRequest.CONTROL_AF_MODE,
+                android.hardware.camera2.CameraMetadata.CONTROL_AF_MODE_OFF,
+            )
+            .setCaptureRequestOption(CaptureRequest.LENS_FOCUS_DISTANCE, diopters.coerceAtLeast(0f))
+            .build()
+        val future = runCatching {
+            Camera2CameraControl.from(camera.cameraControl).setCaptureRequestOptions(options)
+        }.getOrElse {
+            onComplete(it.asException())
+            return
+        }
+        future.addListener(
+            {
+                onComplete(runCatching { future.get() }.exceptionOrNull()?.asException())
+            },
+            mainExecutor,
+        )
+    }
+
+    /** Clears the temporary focus request and returns control to the session. */
+    fun clearFocusDistanceForBracket(onComplete: (Exception?) -> Unit = {}) {
+        val camera = boundCamera ?: run {
+            onComplete(null)
+            return
+        }
+        val future = runCatching {
+            Camera2CameraControl.from(camera.cameraControl).clearCaptureRequestOptions()
+        }.getOrElse {
+            onComplete(it.asException())
+            return
+        }
+        future.addListener(
+            {
+                onComplete(runCatching { future.get() }.exceptionOrNull()?.asException())
+            },
+            mainExecutor,
+        )
+    }
+
+    /** Disables pre-captured ZSL frames while changing EV or focus per frame. */
+    fun setMultiFrameCaptureActive(
+        active: Boolean,
+        onError: (Exception) -> Unit = {},
+    ): Boolean {
+        if (multiFrameCaptureActive == active) return true
+        multiFrameCaptureActive = active
+        var failure: Exception? = null
+        if (mode != SessionMode.VIDEO) {
+            rebind { error ->
+                failure = error
+                onError(error)
+            }
+        }
+        if (failure != null) multiFrameCaptureActive = false
+        return failure == null
+    }
+
+    /**
      * Asks the still request for the processing the chosen quality wants, for
      * the stages the camera actually lists (`<stage>_AVAILABLE_*`). A stage it
      * does not advertise is simply left at the platform default, so a modest
      * HAL is never sent a mode it did not claim.
      */
     private fun applyStillQuality(builder: ImageCapture.Builder, cameraId: String) {
+        if (ultraHdrActive) return
         val plan = StillQualityPlan.forQuality(stillQuality)
         if (plan == StillQualityPlan.NONE) return
         val stages = cameraFlags[cameraId]?.stillStages.orEmpty()
@@ -1131,6 +1229,9 @@ class CameraSession(
         shutterSoundEnabled = enabled
     }
 
+    /** One shutter sound for a multi-frame composite capture. */
+    fun playCaptureFeedback() = playShutterSound()
+
     /** Explicit opt-in location metadata for still captures. */
     fun setCaptureLocation(location: Location?) {
         captureLocation = location?.let(::Location)
@@ -1163,6 +1264,7 @@ class CameraSession(
      */
     fun capture(
         settings: ProcessingSettings,
+        autoLevelDegrees: Float = 0f,
         onSaved: (Uri) -> Unit,
         onNote: (String) -> Unit = {},
         onError: (Exception) -> Unit,
@@ -1179,15 +1281,34 @@ class CameraSession(
             applyMetadataPrivacy(uri)
             onSaved(uri)
         }
+        if (ultraHdrRequested && !ultraHdrActive) {
+            onNote("Ultra HDR unavailable for this capture · saved SDR")
+        }
         when {
             rawMode == RawMode.RAW_ONLY -> captureRawOnlyToFile(capture, deliver, onError)
             rawMode == RawMode.RAW_JPEG -> captureRawToFile(capture, uprightRotation, deliver, onError)
+            ultraHdrActive -> captureToFile(
+                capture,
+                uprightRotation,
+                deliver,
+                onError,
+                preserveUltraHdr = true,
+            )
             settings == ProcessingSettings.NATURAL &&
                 !watermarkOptions.enabled &&
-                !shouldMirrorCapture() ->
+                !shouldMirrorCapture() &&
+                kotlin.math.abs(autoLevelDegrees) < 0.05f ->
                 captureToFile(capture, uprightRotation, deliver, onError)
             else ->
-                captureToMemory(capture, uprightRotation, settings, deliver, onNote, onError)
+                captureToMemory(
+                    capture,
+                    uprightRotation,
+                    settings,
+                    autoLevelDegrees,
+                    deliver,
+                    onNote,
+                    onError,
+                )
         }
     }
 
@@ -1202,6 +1323,7 @@ class CameraSession(
      */
     fun capturePixelFrame(
         maxDimension: Int,
+        playSound: Boolean = true,
         onFrame: (PixelFrame) -> Unit,
         onError: (Exception) -> Unit,
     ) {
@@ -1212,7 +1334,9 @@ class CameraSession(
         }
         val uprightRotation = uprightCaptureRotation()
         capture.takePicture(mainExecutor, object : ImageCapture.OnImageCapturedCallback() {
-            override fun onCaptureStarted() = playShutterSound()
+            override fun onCaptureStarted() {
+                if (playSound) playShutterSound()
+            }
 
             override fun onCaptureSuccess(image: ImageProxy) {
                 // The buffer may already carry part of the uprighting: the
@@ -1379,6 +1503,7 @@ class CameraSession(
         width: Int,
         height: Int,
         namePrefix: String,
+        autoLevelDegrees: Float = 0f,
         onSaved: (Uri) -> Unit,
         onError: (Exception) -> Unit,
     ) {
@@ -1403,14 +1528,16 @@ class CameraSession(
                 val image = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
                 bitmap = image
                 image.setPixels(pixels, 0, width, 0, 0, width, height)
+                bitmap = JpegProcessor.autoLevel(image, autoLevelDegrees)
+                val output = requireNotNull(bitmap)
                 WatermarkRenderer.draw(
-                    image,
+                    output,
                     watermarkOptions,
                     captureLocation,
                     parameters = if (watermarkOptions.enabled) staticCameraParameters() else null,
                 )
                 val saved = context.contentResolver.openOutputStream(uri)?.use { out ->
-                    image.compress(Bitmap.CompressFormat.JPEG, 95, out)
+                    output.compress(Bitmap.CompressFormat.JPEG, 95, out)
                 } ?: false
                 if (!saved) throw IllegalStateException("Could not encode the processed JPEG")
                 writeLocationExif(uri)
@@ -1626,14 +1753,19 @@ class CameraSession(
             onError(IllegalStateException("Nothing to bracket"))
             return
         }
+        if (!setMultiFrameCaptureActive(true, onError)) {
+            return
+        }
         var shots = 0
         fun finishWithError(error: Exception) {
             setExposureCompensationIndex(baseIndex)
+            setMultiFrameCaptureActive(false)
             onError(error)
         }
         fun step(position: Int) {
             if (position >= indexOffsets.size) {
                 setExposureCompensationIndex(baseIndex)
+                setMultiFrameCaptureActive(false)
                 onFinished(shots)
                 return
             }
@@ -1682,6 +1814,7 @@ class CameraSession(
         uprightRotation: Int,
         onSaved: (Uri) -> Unit,
         onError: (Exception) -> Unit,
+        preserveUltraHdr: Boolean = false,
     ) {
         val name = "CameraPlus_${System.currentTimeMillis()}"
         val values = ContentValues().apply {
@@ -1699,7 +1832,11 @@ class CameraSession(
             override fun onImageSaved(outputFileResults: ImageCapture.OutputFileResults) {
                 val uri = outputFileResults.savedUri
                 if (uri != null) {
-                    bakeSavedJpeg(uri, uprightRotation) { onSaved(uri) }
+                    if (preserveUltraHdr) {
+                        orientSavedUltraHdr(uri, uprightRotation) { onSaved(uri) }
+                    } else {
+                        bakeSavedJpeg(uri, uprightRotation) { onSaved(uri) }
+                    }
                 } else {
                     onError(IllegalStateException("CameraX returned no saved MediaStore URI"))
                 }
@@ -1758,11 +1895,29 @@ class CameraSession(
         }
     }
 
+    /**
+     * Ultra HDR's gain map must not be decoded/re-encoded just to orient the
+     * file. Preserve its JPEG_R payload and express the remaining pose in
+     * EXIF instead.
+     */
+    private fun orientSavedUltraHdr(uri: Uri, uprightRotation: Int, onDone: () -> Unit) {
+        ioExecutor.execute {
+            runCatching {
+                val delivered = savedExifRotationDegrees(uri)
+                if (delivered >= 0) {
+                    writeCaptureOrientationTag(uri, remainingRotation(uprightRotation, delivered))
+                }
+            }
+            mainExecutor.execute(onDone)
+        }
+    }
+
     /** Processed path: decode, apply the intent, encode, write. */
     private fun captureToMemory(
         capture: ImageCapture,
         uprightRotation: Int,
         settings: ProcessingSettings,
+        autoLevelDegrees: Float,
         onSaved: (Uri) -> Unit,
         onNote: (String) -> Unit,
         onError: (Exception) -> Unit,
@@ -1805,6 +1960,7 @@ class CameraSession(
                                 out,
                                 mirrorHorizontal = shouldMirrorCapture(),
                                 rotationDegrees = rotation,
+                                autoLevelDegrees = autoLevelDegrees,
                                 watermark = watermarkOptions,
                                 location = captureLocation,
                                 cameraParameters = if (
@@ -1982,6 +2138,16 @@ class CameraSession(
         }.getOrNull()
         activeExtensionMode = if (extensionSelector != null) desiredExtension else ExtensionMode.NONE
         val selector = extensionSelector ?: baseSelector
+        val selectorInfo = runCatching { provider.getCameraInfo(selector) }.getOrNull()
+        ultraHdrSupported = Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE &&
+            selectorInfo?.let { info ->
+                runCatching {
+                    ImageCapture.getImageCaptureCapabilities(info).supportedOutputFormats
+                        .contains(ImageCapture.OUTPUT_FORMAT_JPEG_ULTRA_HDR)
+                }.getOrDefault(false)
+            } == true
+        ultraHdrActive = ultraHdrRequested && ultraHdrCompatible && ultraHdrSupported &&
+            !rawMode.enabled && mode != SessionMode.VIDEO
 
         val useCases = mutableListOf<UseCase>(preview)
         var capture: ImageCapture? = null
@@ -2122,6 +2288,8 @@ class CameraSession(
                         } else {
                             ImageCapture.OUTPUT_FORMAT_RAW_JPEG
                         }
+                    } else if (ultraHdrActive) {
+                        ImageCapture.OUTPUT_FORMAT_JPEG_ULTRA_HDR
                     } else {
                         ImageCapture.OUTPUT_FORMAT_JPEG
                     },
@@ -2605,6 +2773,7 @@ class CameraSession(
                 rawSupported = flags?.raw == true,
                 availableAntiBanding = availableAntiBanding,
                 availableStillQuality = stillQualityChoices,
+                ultraHdrPhotoSupported = ultraHdrSupported,
                 stabilization = StabilizationProfile.choose(
                     previewSupported = videoStabilization?.contains(
                         android.hardware.camera2.CameraMetadata
@@ -2673,12 +2842,13 @@ class CameraSession(
         rawEnabled = rawMode.enabled,
         manualControlsActive = !manualControls.isAuto(),
         highResolutionActive = photoResolution == PhotoResolution.MAXIMUM,
-        highQualityProcessingActive = StillQualityPlan.forQuality(stillQuality).blocksZeroShutterLag,
+        highQualityProcessingActive = StillQualityPlan.forQuality(stillQuality).blocksZeroShutterLag ||
+            ultraHdrActive || multiFrameCaptureActive,
     )
 
     private fun desiredCaptureMode(): Int = when {
         desiredZeroShutterLag() -> ImageCapture.CAPTURE_MODE_ZERO_SHUTTER_LAG
-        stillQuality == StillQuality.HIGH -> ImageCapture.CAPTURE_MODE_MAXIMIZE_QUALITY
+        stillQuality == StillQuality.HIGH || ultraHdrActive -> ImageCapture.CAPTURE_MODE_MAXIMIZE_QUALITY
         else -> ImageCapture.CAPTURE_MODE_MINIMIZE_LATENCY
     }
 

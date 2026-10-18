@@ -5,6 +5,7 @@ import app.cameraplus.camera.BarcodeScanning
 import app.cameraplus.camera.ExposureBracket
 import app.cameraplus.camera.FlashChoice
 import app.cameraplus.camera.FocusTimeout
+import app.cameraplus.camera.FocusBracket
 import app.cameraplus.camera.PhotoAspectRatio
 import app.cameraplus.camera.PhotoResolution
 import app.cameraplus.camera.SelfTimer
@@ -22,6 +23,8 @@ class PresetCodecTest {
             flashChoice = FlashChoice.AUTO,
             photoAspectRatio = PhotoAspectRatio.SIXTEEN_NINE,
             photoResolution = PhotoResolution.MAXIMUM,
+            ultraHdrEnabled = true,
+            autoLevelEnabled = true,
             selfTimer = SelfTimer.TEN_SECONDS,
             selfTimerShots = 3,
             mirrorCapture = true,
@@ -33,6 +36,9 @@ class PresetCodecTest {
             stillQuality = StillQuality.HIGH,
             focusTimeout = FocusTimeout.FIFTEEN_SECONDS,
             exposureBracket = ExposureBracket.FIVE_SHOT,
+            mergeExposureBracket = false,
+            focusBracket = FocusBracket.FIVE_SHOT,
+            focusAssistEnabled = true,
             ghostImage = true,
             defaultFocalMm = 35,
             voiceCountdown = true,

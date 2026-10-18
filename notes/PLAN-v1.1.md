@@ -346,3 +346,21 @@
   mode. BALANCED and HIGH are hidden unless the camera advertises at least one
   of their respective modes. Preference and preset persistence included. 299
   JVM tests pass (5 new); APK compiles. Device verification pending.
+- 2026-10-18: camera-app quality additions — Ultra HDR, focus assist, exposure
+  fusion, focus stacking and auto-level. Ultra HDR uses CameraX's public
+  `OUTPUT_FORMAT_JPEG_ULTRA_HDR` only on Android 14+ when the bound camera
+  advertises it; the direct standard-resolution path keeps the gain map, while
+  software looks, watermark/mirror, metadata edits, auto-level, max-resolution
+  and bracket sequences fall back to SDR. Exposure brackets can now be fused to
+  one bounded (1600px long side)
+  SDR output: small translations are aligned, well-exposed samples are
+  weighted, radiance outliers are suppressed, and the result is tone-mapped;
+  disabling merge retains the original separate bracket files. Manual focus
+  gets a temporary 3x PreviewView centre loupe while the slider is adjusted.
+  Focus bracketing sweeps 3/5 Camera2 focus distances with AF off, then uses a
+  locally sharpest-block stack with small-shift alignment at the same bounded
+  resolution; motion and focus breathing can leave artifacts. Auto-level
+  rotates processed JPEGs by at most 8 degrees and fills/crops to the original
+  frame size; DNG remains unchanged. All new settings are persisted and
+  included in presets. 309 JVM tests pass (10 new); APK compiles. Device
+  verification pending.

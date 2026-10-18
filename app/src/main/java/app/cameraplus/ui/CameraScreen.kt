@@ -117,6 +117,11 @@ import app.cameraplus.camera.LensZoomPlan
 import app.cameraplus.camera.ManualControlPlan
 import app.cameraplus.camera.ExposureBracket
 import app.cameraplus.camera.ExposureBracketPlan
+import app.cameraplus.camera.ExposureFusion
+import app.cameraplus.camera.FocusBracket
+import app.cameraplus.camera.FocusBracketPlan
+import app.cameraplus.camera.FocusStacker
+import app.cameraplus.camera.AutoLevelPlan
 import app.cameraplus.camera.LumaHistogram
 import app.cameraplus.camera.ManualControls
 import app.cameraplus.camera.OverlayMasks
@@ -141,6 +146,7 @@ import app.cameraplus.settings.ProcessingSettingsStore
 import app.cameraplus.settings.CameraPreset
 import app.cameraplus.settings.CapturePreferences
 import app.cameraplus.settings.CapturePreferencesStore
+import app.cameraplus.settings.ProcessingSettings
 import app.cameraplus.settings.GalleryPreferenceStore
 import app.cameraplus.settings.PinnedSetting
 import app.cameraplus.settings.PresetsStore
@@ -438,6 +444,8 @@ fun CameraScreen(
     var isoGauge by remember { mutableStateOf(0f) }
     var speedGauge by remember { mutableStateOf(0f) }
     var focusGauge by remember { mutableStateOf(0f) }
+    var focusAssistVisible by remember { mutableStateOf(false) }
+    var focusAssistPulse by remember { mutableIntStateOf(0) }
     var whiteBalance by remember { mutableStateOf(capturePreferences.whiteBalance) }
     var whiteBalanceKelvin by remember { mutableIntStateOf(capturePreferences.whiteBalanceKelvin) }
     val modeZoomMaximum = ModeZoomPlan.maximum(mode.zoomUseCase(), capabilities.maxDisplayedZoom)
@@ -548,10 +556,32 @@ fun CameraScreen(
         }
     }
 
+    fun ultraHdrCompatible(options: CapturePreferences): Boolean =
+        mode == CameraMode.PHOTO &&
+            processing == ProcessingSettings.NATURAL &&
+            !watermark.enabled &&
+            !options.mirrorCapture &&
+            options.photoResolution == PhotoResolution.STANDARD &&
+            !options.autoLevelEnabled &&
+            !options.focusBracket.enabled &&
+            !options.exposureBracket.enabled &&
+            !options.stripMetadata &&
+            options.exifAuthor.isBlank() &&
+            options.exifCopyright.isBlank() &&
+            rawMode == RawMode.OFF
+
     fun applyCapturePreferences(options: CapturePreferences) {
         val resolvedOptions = options.copy(
             stillQuality = options.stillQuality.takeIf { it in capabilities.availableStillQuality }
                 ?: StillQuality.FAST,
+            ultraHdrEnabled = options.ultraHdrEnabled && capabilities.ultraHdrPhotoSupported,
+            photoHdrEnabled = options.photoHdrEnabled &&
+                !options.exposureBracket.enabled && !options.focusBracket.enabled,
+            exposureBracket = if (options.focusBracket.enabled) {
+                ExposureBracket.OFF
+            } else {
+                options.exposureBracket
+            },
         )
         capturePreferences = resolvedOptions
         flashChoice = resolvedOptions.flashChoice
@@ -575,6 +605,12 @@ fun CameraScreen(
         photoHdrEnabled = resolvedOptions.photoHdrEnabled && capabilities.hdrExtensionAvailable
         timeLapseSpeed = resolvedOptions.timeLapseSpeed
         slowMotionFps = resolvedOptions.slowMotionFps
+        // Recompute the Ultra HDR/SDR binding before any other preference
+        // below can trigger a rebind (notably MAX resolution and still quality).
+        session.setUltraHdrEnabled(
+            resolvedOptions.ultraHdrEnabled,
+            ultraHdrCompatible(resolvedOptions),
+        ) { error -> status = error.message }
         session.setFlashChoice(flashChoice) { error -> status = error.message }
         session.setPhotoAspectRatio(photoAspectRatio) { error -> status = error.message }
         session.setPhotoResolution(photoResolution) { error -> status = error.message }
@@ -626,6 +662,10 @@ fun CameraScreen(
         if (flashChoice == FlashChoice.SCREEN && availableScreenFlash == null) {
             flashChoice = FlashChoice.OFF
         }
+        session.setUltraHdrEnabled(
+            capturePreferences.ultraHdrEnabled,
+            ultraHdrCompatible(capturePreferences),
+        )
         session.setFlashChoice(flashChoice)
         session.setPhotoAspectRatio(photoAspectRatio)
         session.setPhotoResolution(photoResolution)
@@ -683,8 +723,12 @@ fun CameraScreen(
             onZslChanged = { active ->
                 status = if (active) "Instant shutter ready" else null
             },
-                onCapabilities = { published ->
-                    capabilities = published
+            onCapabilities = { published ->
+                capabilities = published
+                if (capturePreferences.ultraHdrEnabled && !published.ultraHdrPhotoSupported) {
+                    capturePreferences = capturePreferences.copy(ultraHdrEnabled = false)
+                    capturePreferencesStore.save(currentPreferences())
+                }
                     if (capturePreferences.stillQuality !in published.availableStillQuality) {
                         capturePreferences = capturePreferences.copy(stillQuality = StillQuality.FAST)
                         capturePreferencesStore.save(currentPreferences())
@@ -754,6 +798,21 @@ fun CameraScreen(
         if (previewViewReady) bindCameraX()
     }
 
+    // PreviewView can snapshot the live surface reliably in COMPATIBLE mode.
+    // Keep the lower-latency SurfaceView path unless the user opts into the
+    // focus loupe; switching modes requires a new CameraX surface binding.
+    LaunchedEffect(capturePreferences.focusAssistEnabled, previewViewReady) {
+        val implementation = if (capturePreferences.focusAssistEnabled) {
+            PreviewView.ImplementationMode.COMPATIBLE
+        } else {
+            PreviewView.ImplementationMode.PERFORMANCE
+        }
+        if (previewView.implementationMode != implementation) {
+            previewView.implementationMode = implementation
+            if (previewViewReady) bindCameraX()
+        }
+    }
+
     // Keep the viewfinder look in step with the processing intent (M3.3).
     LaunchedEffect(processing) {
         session.setLook(processing) { error ->
@@ -776,6 +835,27 @@ fun CameraScreen(
                 status = error.message ?: "Could not apply the hardware photo extension"
             }
         }
+    }
+
+    LaunchedEffect(
+        capturePreferences.ultraHdrEnabled,
+        capturePreferences.autoLevelEnabled,
+        capturePreferences.exposureBracket,
+        capturePreferences.mergeExposureBracket,
+        capturePreferences.focusBracket,
+        capturePreferences.stripMetadata,
+        capturePreferences.exifAuthor,
+        capturePreferences.exifCopyright,
+        mode,
+        processing,
+        watermark.enabled,
+        mirrorCapture,
+        rawMode,
+    ) {
+        session.setUltraHdrEnabled(
+            capturePreferences.ultraHdrEnabled,
+            ultraHdrCompatible(currentPreferences()),
+        ) { error -> status = error.message }
     }
 
     LaunchedEffect(watermark) {
@@ -961,6 +1041,11 @@ fun CameraScreen(
     fun captureNow() {
         session.capture(
             settings = processing,
+            autoLevelDegrees = if (capturePreferences.autoLevelEnabled) {
+                AutoLevelPlan.correctionDegrees(roll)
+            } else {
+                0f
+            },
             onSaved = { uri ->
                 lastMediaUri = uri
                 inFlight--
@@ -974,10 +1059,14 @@ fun CameraScreen(
         )
     }
 
-    suspend fun capturePixelFrame(maxDimension: Int): CameraSession.PixelFrame =
+    suspend fun capturePixelFrame(
+        maxDimension: Int,
+        playSound: Boolean = true,
+    ): CameraSession.PixelFrame =
         suspendCancellableCoroutine { continuation ->
             session.capturePixelFrame(
                 maxDimension = maxDimension,
+                playSound = playSound,
                 onFrame = { frame ->
                     if (continuation.isActive) continuation.resume(frame)
                 },
@@ -999,6 +1088,11 @@ fun CameraScreen(
             width = width,
             height = height,
             namePrefix = name,
+            autoLevelDegrees = if (capturePreferences.autoLevelEnabled) {
+                AutoLevelPlan.correctionDegrees(roll)
+            } else {
+                0f
+            },
             onSaved = { uri ->
                 lastMediaUri = uri
                 finishModeCapture("$note · saved ${width}×$height")
@@ -1007,6 +1101,22 @@ fun CameraScreen(
                 finishModeCapture(error.message ?: "Could not save $name capture")
             },
         )
+    }
+
+    suspend fun setFocusBracketDistance(diopters: Float?) {
+        suspendCancellableCoroutine<Unit> { continuation ->
+            val complete: (Exception?) -> Unit = { error ->
+                if (continuation.isActive) {
+                    if (error == null) continuation.resume(Unit)
+                    else continuation.resumeWithException(error)
+                }
+            }
+            if (diopters == null) {
+                session.clearFocusDistanceForBracket(complete)
+            } else {
+                session.setFocusDistanceForBracket(diopters, complete)
+            }
+        }
     }
 
     fun captureNight() {
@@ -1285,11 +1395,86 @@ fun CameraScreen(
         status = if (targetMm == FocalPresets.AUTO) "1x" else "${targetMm}MM"
     }
 
+    fun commitManualControls() {
+        session.setManualControls(
+            ManualControls(
+                iso = capabilities.isoRange?.let { ManualControlPlan.isoFor(isoGauge, it) },
+                exposureTimeNs = capabilities.exposureRange?.let {
+                    ManualControlPlan.exposureFor(speedGauge, it)
+                },
+                focusDiopters = capabilities.minFocusDistance?.let {
+                    ManualControlPlan.focusFor(focusGauge, it)
+                },
+                whiteBalance = whiteBalance,
+                colorTemperatureKelvin = whiteBalanceKelvin.takeIf {
+                    whiteBalance == WhiteBalancePreset.CUSTOM
+                },
+            ),
+        ) { error -> status = error.message ?: "Could not apply manual controls" }
+    }
+
     /** One press, several exposures: see [ExposureBracketPlan]. */
     fun bracketEligible(): Boolean =
         capturePreferences.exposureBracket.enabled &&
             (mode == CameraMode.PHOTO || mode == CameraMode.EXPERT) &&
             !processingCapture
+
+    fun startMergedBracket(indexOffsets: List<Int>) {
+        processingCapture = true
+        if (!session.setMultiFrameCaptureActive(true) { error -> status = error.message }) {
+            finishModeCapture("Could not prepare bracket capture")
+            return
+        }
+        coroutineScope.launch {
+            val baseIndex = evIndex
+            val frames = ArrayList<CameraSession.PixelFrame>(indexOffsets.size)
+            val actualEvs = ArrayList<Float>(indexOffsets.size)
+            var saving = false
+            try {
+                session.playCaptureFeedback()
+                indexOffsets.forEachIndexed { index, offset ->
+                    val actualIndex = session.setExposureCompensationIndex(baseIndex + offset)
+                    actualEvs += (actualIndex - baseIndex) * capabilities.evStep
+                    status = "HDR BRACKET ${index + 1}/${indexOffsets.size}"
+                    delay(BRACKET_FRAME_SETTLE_MILLIS)
+                    frames += capturePixelFrame(MODE_CAPTURE_MAX_DIMENSION, playSound = false)
+                }
+                val first = frames.first()
+                val fusion = withContext(Dispatchers.Default) {
+                    ExposureFusion.merge(
+                        frames = frames.map { it.pixels },
+                        evOffsets = actualEvs,
+                        width = first.width,
+                        height = first.height,
+                        maxShift = maxOf(first.width, first.height) / 12,
+                    )
+                }
+                val merged = fusion ?: first.pixels
+                val fallback = merged.copyOf()
+                val processed = runCatching {
+                    withContext(Dispatchers.Default) {
+                        ImageProcessor.apply(merged, first.width, first.height, processing)
+                    }
+                }.isSuccess
+                val output = if (processed) merged else fallback
+                val note = if (fusion == null) {
+                    "HDR fusion unavailable · saved centre bracket frame"
+                } else if (processed) {
+                    "Exposure-fused SDR HDR · ${frames.size} aligned bracket frames"
+                } else {
+                    "HDR fusion saved · optional processing skipped"
+                }
+                saveModeCapture(output, first.width, first.height, "BracketHDR", note)
+                saving = true
+            } catch (error: Throwable) {
+                finishModeCapture(error.message ?: "HDR bracket failed")
+            } finally {
+                evIndex = session.setExposureCompensationIndex(baseIndex)
+                session.setMultiFrameCaptureActive(false) { error -> status = error.message }
+                if (!saving && processingCapture) processingCapture = false
+            }
+        }
+    }
 
     fun startBracket() {
         val offsets = ExposureBracketPlan.indexOffsets(
@@ -1299,6 +1484,13 @@ fun CameraScreen(
         if (offsets.isEmpty()) {
             captureNow()
             return
+        }
+        if (capturePreferences.mergeExposureBracket && rawMode == RawMode.OFF) {
+            startMergedBracket(offsets)
+            return
+        }
+        if (capturePreferences.mergeExposureBracket && rawMode != RawMode.OFF) {
+            status = "RAW bracket · saving separate source frames"
         }
         session.captureBracket(
             baseIndex = evIndex,
@@ -1318,6 +1510,75 @@ fun CameraScreen(
         )
     }
 
+    fun startFocusBracket() {
+        val minimumFocus = capabilities.minFocusDistance
+        val distances = FocusBracketPlan.diopters(
+            minimumFocusDistance = minimumFocus ?: 0f,
+            shots = capturePreferences.focusBracket.shots,
+        )
+        if (distances.isEmpty()) {
+            status = "Focus bracketing is unavailable on this lens"
+            inFlight = (inFlight - 1).coerceAtLeast(0)
+            return
+        }
+        processingCapture = true
+        if (!session.setMultiFrameCaptureActive(true) { error -> status = error.message }) {
+            processingCapture = false
+            inFlight = (inFlight - 1).coerceAtLeast(0)
+            status = "Could not prepare focus sweep"
+            return
+        }
+        coroutineScope.launch {
+            val frames = ArrayList<CameraSession.PixelFrame>(distances.size)
+            var saving = false
+            try {
+                session.playCaptureFeedback()
+                distances.forEachIndexed { index, diopters ->
+                    setFocusBracketDistance(diopters)
+                    status = "FOCUS BRACKET ${index + 1}/${distances.size}"
+                    delay(FOCUS_BRACKET_SETTLE_MILLIS)
+                    frames += capturePixelFrame(MODE_CAPTURE_MAX_DIMENSION, playSound = false)
+                }
+                val first = frames.first()
+                val stack = withContext(Dispatchers.Default) {
+                    FocusStacker.merge(
+                        frames = frames.map { it.pixels },
+                        width = first.width,
+                        height = first.height,
+                        maxShift = maxOf(first.width, first.height) / 24,
+                    )
+                }
+                val stacked = stack ?: frames[frames.size / 2].pixels
+                val fallback = stacked.copyOf()
+                val processed = runCatching {
+                    withContext(Dispatchers.Default) {
+                        ImageProcessor.apply(stacked, first.width, first.height, processing)
+                    }
+                }.isSuccess
+                saveModeCapture(
+                    if (processed) stacked else fallback,
+                    first.width,
+                    first.height,
+                    "FocusStack",
+                    if (stack == null) {
+                        "Focus stack unavailable · saved centre focus plane"
+                    } else if (processed) {
+                        "Focus stack · ${frames.size} near-to-far planes · bounded resolution"
+                    } else {
+                        "Focus stack saved · optional processing skipped"
+                    },
+                )
+                saving = true
+            } catch (error: Throwable) {
+                finishModeCapture(error.message ?: "Focus stack failed")
+            } finally {
+                runCatching { setFocusBracketDistance(null) }
+                session.setMultiFrameCaptureActive(false) { error -> status = error.message }
+                if (!saving && processingCapture) processingCapture = false
+            }
+        }
+    }
+
     fun pressStillShutter() {
         if (processingCapture || inFlight >= MAX_IN_FLIGHT) return
         shutterPulse++
@@ -1329,7 +1590,18 @@ fun CameraScreen(
             }
         } else if (mode == CameraMode.PHOTO || mode == CameraMode.EXPERT) {
             inFlight++
-            if (bracketEligible()) startBracket() else captureNow()
+            if (mode == CameraMode.PHOTO && capturePreferences.focusBracket.enabled) {
+                if (rawMode != RawMode.OFF) {
+                    inFlight = (inFlight - 1).coerceAtLeast(0)
+                    status = "Turn RAW off to build a focus stack"
+                } else {
+                    startFocusBracket()
+                }
+            } else if (bracketEligible()) {
+                startBracket()
+            } else {
+                captureNow()
+            }
         } else {
             captureCurrentMode()
         }
@@ -1344,6 +1616,14 @@ fun CameraScreen(
         } else if (selected != mode) {
             val previous = mode
             mode = selected
+            // Set the format decision before the profile's bind, so a Photo ->
+            // Night/Portrait transition cannot leave the next in-memory burst
+            // bound to JPEG_R. The profile bind itself rebuilds the use case.
+            session.setUltraHdrEnabled(
+                capturePreferences.ultraHdrEnabled,
+                ultraHdrCompatible(currentPreferences()),
+                rebindIfChanged = false,
+            )
             if (!previous.usesCamera2Recorder && !selected.usesCamera2Recorder) {
                 if (extensionModeFor(selected, photoHdrEnabled) != ExtensionMode.NONE) {
                     rawMode = RawMode.OFF
@@ -1528,6 +1808,12 @@ fun CameraScreen(
         }
     }
 
+    LaunchedEffect(focusAssistPulse) {
+        if (!focusAssistVisible) return@LaunchedEffect
+        delay(1_400)
+        focusAssistVisible = false
+    }
+
     Box(
         modifier = Modifier
             .fillMaxSize()
@@ -1581,6 +1867,15 @@ fun CameraScreen(
                         .padding(horizontal = 18.dp, vertical = 12.dp),
                 )
             }
+        }
+
+        if (mode == CameraMode.EXPERT && capturePreferences.focusAssistEnabled && focusAssistVisible) {
+            FocusAssistOverlay(
+                previewView = previewView,
+                modifier = Modifier
+                    .align(Alignment.TopEnd)
+                    .padding(top = 116.dp, end = 18.dp),
+            )
         }
 
         GuideOverlay(
@@ -2111,30 +2406,23 @@ fun CameraScreen(
                         whiteBalanceKelvin = whiteBalanceKelvin,
                         onIsoChange = { isoGauge = it },
                         onSpeedChange = { speedGauge = it },
-                        onFocusChange = { focusGauge = it },
-                        onWhiteBalanceChange = { whiteBalance = it },
-                        onWhiteBalanceKelvinChange = { whiteBalanceKelvin = it },
-                        onCommit = {
-                            session.setManualControls(
-                                ManualControls(
-                                    iso = capabilities.isoRange?.let {
-                                        ManualControlPlan.isoFor(isoGauge, it)
-                                    },
-                                    exposureTimeNs = capabilities.exposureRange?.let {
-                                        ManualControlPlan.exposureFor(speedGauge, it)
-                                    },
-                                    focusDiopters = capabilities.minFocusDistance?.let {
-                                        ManualControlPlan.focusFor(focusGauge, it)
-                                    },
-                                    whiteBalance = whiteBalance,
-                                    colorTemperatureKelvin = whiteBalanceKelvin.takeIf {
-                                        whiteBalance == WhiteBalancePreset.CUSTOM
-                                    },
-                                ),
-                            ) { error ->
-                                status = error.message ?: "Could not apply manual controls"
+                        onFocusChange = {
+                            focusGauge = it
+                            if (capturePreferences.focusAssistEnabled) {
+                                focusAssistVisible = true
+                                focusAssistPulse++
                             }
                         },
+                        onFocusCommit = {
+                            commitManualControls()
+                            if (capturePreferences.focusAssistEnabled) {
+                                focusAssistVisible = true
+                                focusAssistPulse++
+                            }
+                        },
+                        onWhiteBalanceChange = { whiteBalance = it },
+                        onWhiteBalanceKelvinChange = { whiteBalanceKelvin = it },
+                        onCommit = ::commitManualControls,
                         onRawCycle = {
                             val next = rawMode.next()
                             rawMode = next
@@ -2412,17 +2700,29 @@ fun CameraScreen(
                 onSettingsChange = { updated ->
                     processing = updated
                     store.save(updated)
+                    session.setUltraHdrEnabled(
+                        capturePreferences.ultraHdrEnabled,
+                        ultraHdrCompatible(currentPreferences()),
+                    ) { error -> status = error.message }
                 },
                 capturePreferences = currentPreferences(),
                 supportedVideoFrameRates = capabilities.supportedVideoFrameRates,
                 maximumPhotoResolutionSupported = capabilities.maximumPhotoResolutionSupported,
+                ultraHdrPhotoSupported = capabilities.ultraHdrPhotoSupported,
+                manualFocusSupported = capabilities.minFocusDistance?.let { it > 0f } == true,
                 availableAntiBanding = capabilities.availableAntiBanding,
                 availableStillQuality = capabilities.availableStillQuality,
                 screenFlashSupported = screenFlashAvailable,
                 hdrExtensionAvailable = capabilities.hdrExtensionAvailable,
                 onCapturePreferencesChange = ::applyCapturePreferences,
                 watermark = watermark,
-                onWatermarkChange = { watermark = it },
+                onWatermarkChange = {
+                    watermark = it
+                    session.setUltraHdrEnabled(
+                        capturePreferences.ultraHdrEnabled,
+                        ultraHdrCompatible(currentPreferences()),
+                    ) { error -> status = error.message }
+                },
                 galleryApps = galleryApps,
                 preferredGalleryPackage = preferredGallery,
                 onPreferredGalleryChange = { preferredGallery = it },
@@ -2597,6 +2897,7 @@ private fun ExpertControls(
     onIsoChange: (Float) -> Unit,
     onSpeedChange: (Float) -> Unit,
     onFocusChange: (Float) -> Unit,
+    onFocusCommit: () -> Unit,
     onWhiteBalanceChange: (WhiteBalancePreset) -> Unit,
     onWhiteBalanceKelvinChange: (Int) -> Unit,
     onCommit: () -> Unit,
@@ -2629,7 +2930,7 @@ private fun ExpertControls(
                 valueText = focusText(focusGauge, minFocusDistance),
                 enabled = minFocusDistance != null,
                 onValueChange = onFocusChange,
-                onCommit = onCommit,
+                onCommit = onFocusCommit,
             )
         }
         Row(
@@ -3090,6 +3391,8 @@ private val SLIDER_SIDE_GAP = 64.dp
 /** How many captures may be writing at once before the shutter stops arming. */
 private const val MAX_IN_FLIGHT = 4
 private const val MODE_CAPTURE_MAX_DIMENSION = 1600
+private const val BRACKET_FRAME_SETTLE_MILLIS = 180L
+private const val FOCUS_BRACKET_SETTLE_MILLIS = 220L
 
 /** Upper bound for a self-timer series, and the gap between its shots. */
 private const val MAX_TIMER_SHOTS = 5

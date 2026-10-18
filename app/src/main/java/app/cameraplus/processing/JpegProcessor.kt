@@ -2,8 +2,11 @@ package app.cameraplus.processing
 
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
+import android.graphics.Canvas
 import android.graphics.Matrix
+import android.graphics.Paint
 import android.location.Location
+import app.cameraplus.camera.AutoLevelPlan
 import app.cameraplus.settings.ProcessingSettings
 import app.cameraplus.settings.WatermarkOptions
 import java.io.OutputStream
@@ -50,6 +53,7 @@ object JpegProcessor {
         out: OutputStream,
         mirrorHorizontal: Boolean = false,
         rotationDegrees: Int = 0,
+        autoLevelDegrees: Float = 0f,
         watermark: WatermarkOptions = WatermarkOptions(),
         location: Location? = null,
         cameraParameters: CameraParameters? = null,
@@ -76,6 +80,7 @@ object JpegProcessor {
             // Captures arrive in sensor orientation; orient once, up front,
             // so the look passes, watermark and encode all work upright.
             bitmap = orient(bitmap, rotationDegrees, mirrorHorizontal)
+            bitmap = autoLevel(bitmap, autoLevelDegrees)
             val width = bitmap.width
             val height = bitmap.height
             if (width.toLong() * height.toLong() > maxPixels) return false
@@ -155,6 +160,28 @@ object JpegProcessor {
             return transformed
         }
         return bitmap
+    }
+
+    /** Rotates and fills the original bounds, preserving the HDR/EXIF callers' order. */
+    fun autoLevel(bitmap: Bitmap, correctionDegrees: Float): Bitmap {
+        if (!correctionDegrees.isFinite() || kotlin.math.abs(correctionDegrees) < 0.05f) return bitmap
+        val output = Bitmap.createBitmap(bitmap.width, bitmap.height, Bitmap.Config.ARGB_8888)
+        val canvas = Canvas(output)
+        val centerX = bitmap.width / 2f
+        val centerY = bitmap.height / 2f
+        val scale = AutoLevelPlan.fillScale(bitmap.width, bitmap.height, correctionDegrees)
+        canvas.translate(centerX, centerY)
+        canvas.scale(scale, scale)
+        canvas.rotate(correctionDegrees)
+        canvas.translate(-centerX, -centerY)
+        canvas.drawBitmap(
+            bitmap,
+            0f,
+            0f,
+            Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG),
+        )
+        bitmap.recycle()
+        return output
     }
 
     /** Mutable ARGB decode so the pixels can be edited in place. */

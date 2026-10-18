@@ -6,6 +6,7 @@ import app.cameraplus.camera.BarcodeScanning
 import app.cameraplus.camera.ExposureBracket
 import app.cameraplus.camera.FlashChoice
 import app.cameraplus.camera.FocusTimeout
+import app.cameraplus.camera.FocusBracket
 import app.cameraplus.camera.PhotoAspectRatio
 import app.cameraplus.camera.PhotoResolution
 import app.cameraplus.camera.SelfTimer
@@ -84,6 +85,8 @@ object PresetCodec {
         "zebras" to c.zebrasEnabled.toString(),
         "peaking" to c.peakingEnabled.toString(),
         "photoHdr" to c.photoHdrEnabled.toString(),
+        "ultraHdr" to c.ultraHdrEnabled.toString(),
+        "autoLevel" to c.autoLevelEnabled.toString(),
         "timeLapse" to c.timeLapseSpeed.toString(),
         "slowMotion" to c.slowMotionFps.toString(),
         "whiteBalance" to c.whiteBalance.name,
@@ -95,6 +98,9 @@ object PresetCodec {
         "stillQuality" to c.stillQuality.name,
         "focusTimeout" to c.focusTimeout.name,
         "bracket" to c.exposureBracket.name,
+        "mergeBracket" to c.mergeExposureBracket.toString(),
+        "focusBracket" to c.focusBracket.name,
+        "focusAssist" to c.focusAssistEnabled.toString(),
         "ghost" to c.ghostImage.toString(),
         "focalMm" to c.defaultFocalMm.toString(),
         "voiceCountdown" to c.voiceCountdown.toString(),
@@ -124,6 +130,8 @@ object PresetCodec {
             zebrasEnabled = fields.boolOr("zebras", defaults.zebrasEnabled),
             peakingEnabled = fields.boolOr("peaking", defaults.peakingEnabled),
             photoHdrEnabled = fields.boolOr("photoHdr", defaults.photoHdrEnabled),
+            ultraHdrEnabled = fields.boolOr("ultraHdr", defaults.ultraHdrEnabled),
+            autoLevelEnabled = fields.boolOr("autoLevel", defaults.autoLevelEnabled),
             timeLapseSpeed = fields.intOr("timeLapse", defaults.timeLapseSpeed),
             slowMotionFps = fields.intOr("slowMotion", defaults.slowMotionFps),
             whiteBalance = fields.enumOf("whiteBalance", defaults.whiteBalance),
@@ -139,6 +147,9 @@ object PresetCodec {
             stillQuality = fields.enumOf("stillQuality", defaults.stillQuality),
             focusTimeout = fields.enumOf("focusTimeout", defaults.focusTimeout),
             exposureBracket = fields.enumOf("bracket", defaults.exposureBracket),
+            mergeExposureBracket = fields.boolOr("mergeBracket", defaults.mergeExposureBracket),
+            focusBracket = fields.enumOf("focusBracket", defaults.focusBracket),
+            focusAssistEnabled = fields.boolOr("focusAssist", defaults.focusAssistEnabled),
             ghostImage = fields.boolOr("ghost", defaults.ghostImage),
             defaultFocalMm = fields.intOr("focalMm", defaults.defaultFocalMm),
             voiceCountdown = fields.boolOr("voiceCountdown", defaults.voiceCountdown),

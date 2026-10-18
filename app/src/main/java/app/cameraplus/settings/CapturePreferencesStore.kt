@@ -7,6 +7,7 @@ import app.cameraplus.camera.ExposureBracket
 import app.cameraplus.camera.FlashChoice
 import app.cameraplus.camera.FocalPresets
 import app.cameraplus.camera.FocusTimeout
+import app.cameraplus.camera.FocusBracket
 import app.cameraplus.camera.PhotoAspectRatio
 import app.cameraplus.camera.PhotoResolution
 import app.cameraplus.camera.SelfTimer
@@ -32,6 +33,10 @@ data class CapturePreferences(
     val zebrasEnabled: Boolean = false,
     val peakingEnabled: Boolean = false,
     val photoHdrEnabled: Boolean = false,
+    /** Android Ultra HDR JPEG capture, when supported by CameraX and the lens. */
+    val ultraHdrEnabled: Boolean = false,
+    /** Correct small horizon tilt in processed JPEG output. */
+    val autoLevelEnabled: Boolean = false,
     val timeLapseSpeed: Int = 60,
     val slowMotionFps: Int = 120,
     val whiteBalance: WhiteBalancePreset = WhiteBalancePreset.AUTO,
@@ -46,6 +51,10 @@ data class CapturePreferences(
     val stillQuality: StillQuality = StillQuality.FAST,
     val focusTimeout: FocusTimeout = FocusTimeout.OFF,
     val exposureBracket: ExposureBracket = ExposureBracket.OFF,
+    /** Merge AE bracket frames into one bounded-resolution SDR HDR result. */
+    val mergeExposureBracket: Boolean = true,
+    val focusBracket: FocusBracket = FocusBracket.OFF,
+    val focusAssistEnabled: Boolean = false,
     /** Onion skin: hold the last shot over the viewfinder at low opacity. */
     val ghostImage: Boolean = false,
     /** 35 mm-equivalent default focal (0 = the lens's own wide stop). */
@@ -82,6 +91,8 @@ class CapturePreferencesStore(context: Context) {
         zebrasEnabled = prefs.getBoolean(KEY_ZEBRAS, false),
         peakingEnabled = prefs.getBoolean(KEY_PEAKING, false),
         photoHdrEnabled = prefs.getBoolean(KEY_HDR, false),
+        ultraHdrEnabled = prefs.getBoolean(KEY_ULTRA_HDR, false),
+        autoLevelEnabled = prefs.getBoolean(KEY_AUTO_LEVEL, false),
         timeLapseSpeed = prefs.getInt(KEY_TIME_LAPSE_SPEED, 60)
             .takeIf { it in TIME_LAPSE_SPEEDS } ?: 60,
         slowMotionFps = prefs.getInt(KEY_SLOW_MOTION_FPS, 120)
@@ -96,6 +107,9 @@ class CapturePreferencesStore(context: Context) {
         stillQuality = enumValue(prefs.getString(KEY_STILL_QUALITY, null), StillQuality.FAST),
         focusTimeout = enumValue(prefs.getString(KEY_FOCUS_TIMEOUT, null), FocusTimeout.OFF),
         exposureBracket = enumValue(prefs.getString(KEY_BRACKET, null), ExposureBracket.OFF),
+        mergeExposureBracket = prefs.getBoolean(KEY_MERGE_BRACKET, true),
+        focusBracket = enumValue(prefs.getString(KEY_FOCUS_BRACKET, null), FocusBracket.OFF),
+        focusAssistEnabled = prefs.getBoolean(KEY_FOCUS_ASSIST, false),
         ghostImage = prefs.getBoolean(KEY_GHOST, false),
         defaultFocalMm = prefs.getInt(KEY_DEFAULT_FOCAL, 0)
             .takeIf { it in FOCAL_PRESETS } ?: 0,
@@ -159,6 +173,8 @@ class CapturePreferencesStore(context: Context) {
             .putBoolean(KEY_ZEBRAS, options.zebrasEnabled)
             .putBoolean(KEY_PEAKING, options.peakingEnabled)
             .putBoolean(KEY_HDR, options.photoHdrEnabled)
+            .putBoolean(KEY_ULTRA_HDR, options.ultraHdrEnabled)
+            .putBoolean(KEY_AUTO_LEVEL, options.autoLevelEnabled)
             .putInt(KEY_TIME_LAPSE_SPEED, options.timeLapseSpeed)
             .putInt(KEY_SLOW_MOTION_FPS, options.slowMotionFps)
             .putString(KEY_WB, options.whiteBalance.name)
@@ -170,6 +186,9 @@ class CapturePreferencesStore(context: Context) {
             .putString(KEY_STILL_QUALITY, options.stillQuality.name)
             .putString(KEY_FOCUS_TIMEOUT, options.focusTimeout.name)
             .putString(KEY_BRACKET, options.exposureBracket.name)
+            .putBoolean(KEY_MERGE_BRACKET, options.mergeExposureBracket)
+            .putString(KEY_FOCUS_BRACKET, options.focusBracket.name)
+            .putBoolean(KEY_FOCUS_ASSIST, options.focusAssistEnabled)
             .putBoolean(KEY_GHOST, options.ghostImage)
             .putInt(KEY_DEFAULT_FOCAL, options.defaultFocalMm.takeIf { it in FOCAL_PRESETS } ?: 0)
             .putInt(KEY_TIMER_SHOTS, options.selfTimerShots.coerceIn(1, MAX_TIMER_SHOTS))
@@ -201,6 +220,8 @@ class CapturePreferencesStore(context: Context) {
         const val KEY_ZEBRAS = "zebras"
         const val KEY_PEAKING = "peaking"
         const val KEY_HDR = "photo_hdr"
+        const val KEY_ULTRA_HDR = "ultra_hdr"
+        const val KEY_AUTO_LEVEL = "auto_level"
         const val KEY_TIME_LAPSE_SPEED = "time_lapse_speed"
         const val KEY_SLOW_MOTION_FPS = "slow_motion_fps"
         const val KEY_WB = "white_balance"
@@ -212,6 +233,9 @@ class CapturePreferencesStore(context: Context) {
         const val KEY_STILL_QUALITY = "still_quality"
         const val KEY_FOCUS_TIMEOUT = "focus_timeout"
         const val KEY_BRACKET = "exposure_bracket"
+        const val KEY_MERGE_BRACKET = "merge_exposure_bracket"
+        const val KEY_FOCUS_BRACKET = "focus_bracket"
+        const val KEY_FOCUS_ASSIST = "focus_assist"
         const val KEY_GHOST = "ghost_image"
         const val KEY_DEFAULT_FOCAL = "default_focal_mm"
         const val KEY_TIMER_SHOTS = "self_timer_shots"

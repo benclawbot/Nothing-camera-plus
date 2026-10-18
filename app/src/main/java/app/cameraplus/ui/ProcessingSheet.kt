@@ -43,6 +43,7 @@ import app.cameraplus.camera.BarcodeScanning
 import app.cameraplus.camera.ExposureBracket
 import app.cameraplus.camera.FocalPresets
 import app.cameraplus.camera.FocusTimeout
+import app.cameraplus.camera.FocusBracket
 import app.cameraplus.camera.PhotoAspectRatio
 import app.cameraplus.camera.PhotoResolution
 import app.cameraplus.camera.SelfTimer
@@ -71,6 +72,8 @@ fun ProcessingSheet(
     capturePreferences: CapturePreferences,
     supportedVideoFrameRates: List<VideoFrameRate>,
     maximumPhotoResolutionSupported: Boolean,
+    ultraHdrPhotoSupported: Boolean,
+    manualFocusSupported: Boolean,
     availableAntiBanding: List<AntiBanding>,
     availableStillQuality: List<StillQuality>,
     screenFlashSupported: Boolean,
@@ -180,8 +183,35 @@ fun ProcessingSheet(
                             onCapturePreferencesChange(capturePreferences.copy(focusTimeout = it))
                         }
                     }
-                    SettingsToggle("HARDWARE HDR EXTENSION", capturePreferences.photoHdrEnabled, hdrExtensionAvailable) {
+                    SettingsToggle(
+                        "HARDWARE HDR EXTENSION",
+                        capturePreferences.photoHdrEnabled,
+                        hdrExtensionAvailable && !capturePreferences.exposureBracket.enabled &&
+                            !capturePreferences.focusBracket.enabled,
+                    ) {
                         onCapturePreferencesChange(capturePreferences.copy(photoHdrEnabled = !capturePreferences.photoHdrEnabled))
+                    }
+                    SettingsToggle("ULTRA HDR JPEG", capturePreferences.ultraHdrEnabled, ultraHdrPhotoSupported) {
+                        onCapturePreferencesChange(
+                            capturePreferences.copy(ultraHdrEnabled = !capturePreferences.ultraHdrEnabled),
+                        )
+                    }
+                    if (capturePreferences.ultraHdrEnabled) {
+                        Text(
+                            text = "JPEG_R gain map is preserved only on a direct, unprocessed capture; incompatible options save SDR instead.",
+                            color = DimWhite,
+                            style = MaterialTheme.typography.labelSmall,
+                        )
+                    }
+                    SettingsToggle("AUTO-LEVEL OUTPUT", capturePreferences.autoLevelEnabled) {
+                        onCapturePreferencesChange(
+                            capturePreferences.copy(autoLevelEnabled = !capturePreferences.autoLevelEnabled),
+                        )
+                    }
+                    SettingsToggle("FOCUS ASSIST", capturePreferences.focusAssistEnabled, manualFocusSupported) {
+                        onCapturePreferencesChange(
+                            capturePreferences.copy(focusAssistEnabled = !capturePreferences.focusAssistEnabled),
+                        )
                     }
                     SettingsToggle("MIRROR FRONT CAMERA", capturePreferences.mirrorCapture) {
                         onCapturePreferencesChange(capturePreferences.copy(mirrorCapture = !capturePreferences.mirrorCapture))
@@ -219,11 +249,53 @@ fun ProcessingSheet(
                             onCapturePreferencesChange(capturePreferences.copy(antiBanding = it))
                         }
                     }
+                    SettingsChoices("FOCUS BRACKET", capturePreferences.focusBracket.label,
+                        (if (manualFocusSupported) FocusBracket.entries else listOf(FocusBracket.OFF))
+                            .map { it.label }) { value ->
+                        FocusBracket.entries.firstOrNull { it.label == value }?.let { selected ->
+                            onCapturePreferencesChange(
+                                capturePreferences.copy(
+                                    focusBracket = selected,
+                                    photoHdrEnabled = if (selected.enabled) false else capturePreferences.photoHdrEnabled,
+                                    exposureBracket = if (selected != FocusBracket.OFF) {
+                                        ExposureBracket.OFF
+                                    } else {
+                                        capturePreferences.exposureBracket
+                                    },
+                                ),
+                            )
+                        }
+                    }
                     SettingsChoices("EXPOSURE BRACKET", capturePreferences.exposureBracket.label,
                         ExposureBracket.entries.map { it.label }) { value ->
-                        ExposureBracket.entries.firstOrNull { it.label == value }?.let {
-                            onCapturePreferencesChange(capturePreferences.copy(exposureBracket = it))
+                        ExposureBracket.entries.firstOrNull { it.label == value }?.let { selected ->
+                            onCapturePreferencesChange(
+                                capturePreferences.copy(
+                                    exposureBracket = selected,
+                                    photoHdrEnabled = if (selected.enabled) false else capturePreferences.photoHdrEnabled,
+                                    focusBracket = if (selected.enabled) FocusBracket.OFF
+                                    else capturePreferences.focusBracket,
+                                ),
+                            )
                         }
+                    }
+                    SettingsToggle(
+                        "MERGE BRACKET TO HDR",
+                        capturePreferences.mergeExposureBracket,
+                        capturePreferences.exposureBracket.enabled,
+                    ) {
+                        onCapturePreferencesChange(
+                            capturePreferences.copy(mergeExposureBracket = !capturePreferences.mergeExposureBracket),
+                        )
+                    }
+                    if (capturePreferences.focusBracket.enabled ||
+                        (capturePreferences.exposureBracket.enabled && capturePreferences.mergeExposureBracket)
+                    ) {
+                        Text(
+                            text = "Composite captures are aligned and merged at bounded preview resolution; static scenes work best.",
+                            color = DimWhite,
+                            style = MaterialTheme.typography.labelSmall,
+                        )
                     }
                     SettingsToggle("GHOST IMAGE", capturePreferences.ghostImage) {
                         onCapturePreferencesChange(capturePreferences.copy(ghostImage = !capturePreferences.ghostImage))

@@ -43,7 +43,7 @@ Genuine remaining gaps (clean-room implementable):
 
 Vendor-only (🚫, not reproducible as-is): beauty-video pipeline, AI scene
 detection, gender estimate, glyph/LED flash and glyph mirror, Morpho/Tetras
-LUT packs, motion photo, Ultra HDR / Ultra XDR, 50MP remosaic, super
+LUT packs, motion photo, Ultra XDR, 50MP remosaic, super
 resolution, TurboNight variants, tele-macro, portrait depth segmentation,
 ArcSoft/morpho panorama, smile shutter (vendor face ML).
 
@@ -98,9 +98,12 @@ Nothing community's own camera feedback threads (`nothing.community`).
 |---|---|---|
 | Aspect ratio picker (1:1, 4:3, 16:9, 20.5:9 …) | ✅ | CameraX crop ratios |
 | HDR toggle (off/auto/on/force) | 🟡 | single-frame software HDR + capability-gated CameraX HDR extension; no Force/auto scene detection |
-| Ultra HDR | 🚫 | vendor format |
+| Ultra HDR JPEG_R | 🟡 | public CameraX output format, Android 14+ and capability-gated; direct standard-resolution path preserves gain map, software re-encode/metadata edits/auto-level/MAX/bracket sequences fall back to SDR; hardware verification pending |
 | Quality 12MP / max JPEG | 🟡 | selects CameraX highest advertised output; does not promise 50MP remosaic |
 | Still capture quality (FAST / BALANCED / HIGH) | 🟡 | FAST leaves HAL defaults, BALANCED requests advertised preview-tuned NR/edge modes, HIGH requests only advertised high-quality Camera2 processing stages and leaves ZSL; HAL may ignore hints, hardware validation pending |
+| Auto-level saved output | 🟡 | optional correction up to 8° on processed JPEGs with a fill crop; DNG is unchanged; sensor-to-file direction and crop quality need device validation |
+| Exposure-bracket HDR merge | 🟡 | bounded-resolution clean-room fusion aligns small shifts, weights well-exposed samples, rejects large radiance outliers and tone-maps an SDR output; source bracket can still be saved separately; moving-scene ghosts and hardware capture pending |
+| Focus bracketing / stacking | 🟡 | 3/5 advertised-diopter sweep and local sharpness stack at bounded resolution; limited translation alignment; focus breathing, seams and motion remain, device pending |
 | Motion photo (live) | 🚫 | vendor capture pipeline |
 | RAW / Pro RAW | 🟡 | fixed wrong CameraX overload; hardware capture still unverified |
 | Flash off/on/torch/auto/screen | 🟡 | off/on/auto, ScreenFlashView and video torch; Glyph/LED variants absent |
@@ -122,6 +125,7 @@ Nothing community's own camera feedback threads (`nothing.community`).
 | Per-mode zoom caps (night 30x, slo-mo 2x, timelapse 10x) | 🟡 | CameraX modes are capped; Camera2 slow-motion/time-lapse gestures remain limited |
 | Focal-length labels (14/24/28/35mm…) | ✅ | Zoom chips label stops with their 35 mm-equivalent focal ("24mm") and the live readout shows ratio + mm; conversion uses the serving lens' focal and sensor size (43.27 mm frame — the original's zoom-slider basis). Device unverified |
 | Resolution-aware lens choice for digital zoom | 🟡 | `LensPlan` scores each reachable lens by the sensor pixels left after the crop (readout ÷ ratio²), so a mid-zoom request is served by cropping the telephoto slightly instead of the wide lens a lot; the bound lens is kept while it stays within half the best score. Unit-tested; device behaviour unverified |
+| Manual-focus assist loupe | 🟡 | temporary 3× centre crop sampled from PreviewView while the Expert focus slider is adjusted; surface bitmap support varies by device |
 
 ## Video
 
@@ -200,6 +204,7 @@ Nothing community's own camera feedback threads (`nothing.community`).
 | Viewfinder exposure-compensation control | 🟡 | EV slider wired to CameraX; hardware behavior unverified |
 | Long-press focus/meter lock | 🟡 | long-duration metering action; hardware behavior unverified |
 | Pinch-to-zoom / zoom readout | 🟡 | implemented, hardware behavior unverified |
+| Focus assist | 🟡 | temporary 3× preview crop while the manual focus slider is adjusted; `PreviewView` snapshot support device-dependent |
 | Aspect ratio picker | ✅ | |
 | Shutter sound | ✅ | explicit on/off; platform may enforce regional behavior |
 | Save position | ✅ | photos and videos go to the standard `DCIM/Camera` folder, as the original does; still no user-selectable path or SD card |
@@ -214,7 +219,8 @@ Nothing community's own camera feedback threads (`nothing.community`).
 
 ## Priority order for the rebuild
 
-1. Device validation of RAW, processing fallback, focus, EV and zoom on the target phone.
+1. Device validation of Ultra HDR, focus assist/bracketing, exposure fusion,
+   auto-level, RAW, processing fallback, EV and zoom on the target phone.
 2. Device validation of slow motion/time lapse (high-speed capability and MediaRecorder cadence).
 3. Device validation of panorama/night/portrait memory and output quality.
 4. Aspect ratio, full video fps/resolution controls, macro, and remaining settings.
@@ -253,7 +259,11 @@ unit-tested math component does not count as hardware feature parity.
 |---|---|---|
 | Aspect ratios 1:1, 4:3, 16:9, 20.5:9, 20:9, 19.5:9, 19:9, 18:9 | ✅ | `pref_camera_aspect_ratio_entryvalues` |
 | HDR Off / On / Force and auto-detection | 🟡 | software curve + hardware extension when available; no Force/scene detection |
-| Ultra HDR / Ultra XDR output | 🚫 | `UltraHDRFragment`; original format pipeline not reproduced |
+| Exposure bracket to merged HDR output | 🟡 | clean-room exposure fusion with shift alignment and radiance-outlier rejection; bounded 1600px long side, SDR output; original bracket files remain available by disabling merge |
+| Focus bracket / stack | 🟡 | Camera2 focus-distance sweep and local sharpness stack (3/5 frames), bounded 1600px long side; device behavior and moving-subject artifacts pending |
+| Auto-level saved image | 🟡 | small gravity-derived roll correction with fill crop on processed JPEGs; RAW remains untouched; device validation pending |
+| Ultra HDR JPEG_R output | 🟡 | CameraX public Ultra HDR output on Android 14+ when the bound camera advertises it; software processing/metadata edits fall back to SDR; hardware pending |
+| Ultra XDR output | 🚫 | vendor-specific format/pipeline not reproduced |
 | Photo size 12MP / 50MP | 🟡 | Standard/MAX JPEG; max output is hardware-reported and not guaranteed to be 50MP |
 | Remosaic 50MP capture | 🚫 | `RemosaicMode`, `NT_REMOSAIC_CAPTURE_KEY` |
 | Super-resolution capture / zoom | ⬜ | `SRModeHelper`, `RawSuperResolutionHelper` |
