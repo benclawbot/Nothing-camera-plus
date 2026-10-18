@@ -9,6 +9,7 @@ import app.cameraplus.camera.FocusTimeout
 import app.cameraplus.camera.PhotoAspectRatio
 import app.cameraplus.camera.PhotoResolution
 import app.cameraplus.camera.SelfTimer
+import app.cameraplus.camera.StillQuality
 import app.cameraplus.camera.VideoFrameRate
 import app.cameraplus.camera.VideoQuality
 import app.cameraplus.camera.WhiteBalancePreset
@@ -91,6 +92,7 @@ object PresetCodec {
         "keepExposure" to c.keepExposure.toString(),
         "exposureIndex" to c.exposureCompensationIndex.toString(),
         "antiBanding" to c.antiBanding.name,
+        "stillQuality" to c.stillQuality.name,
         "focusTimeout" to c.focusTimeout.name,
         "bracket" to c.exposureBracket.name,
         "ghost" to c.ghostImage.toString(),
@@ -134,6 +136,7 @@ object PresetCodec {
                 defaults.exposureCompensationIndex,
             ),
             antiBanding = fields.enumOf("antiBanding", defaults.antiBanding),
+            stillQuality = fields.enumOf("stillQuality", defaults.stillQuality),
             focusTimeout = fields.enumOf("focusTimeout", defaults.focusTimeout),
             exposureBracket = fields.enumOf("bracket", defaults.exposureBracket),
             ghostImage = fields.boolOr("ghost", defaults.ghostImage),

@@ -334,3 +334,15 @@
   marginal gain, and a camera that reports no sensor size falls back to the
   old least-crop rule. 294 JVM tests pass (6 new); APK compiles. Device
   verification pending.
+- 2026-10-18: image- and zoom-quality pass, part 2 — still processing quality.
+  The PHOTO settings sheet gains FAST / BALANCED / HIGH. FAST leaves the HAL's
+  normal defaults untouched; BALANCED asks for zero-shutter-lag-tuned noise
+  reduction and edge modes; HIGH requests the advertised high-quality modes
+  for noise reduction, edge, shading, aberration, hot-pixel and distortion
+  correction. A request is sent only when its selected mode appears in the
+  bound lens' advertised mode list, and unsupported stages remain at their
+  platform defaults. HIGH leaves CameraX zero-shutter-lag and selects
+  `CAPTURE_MODE_MAXIMIZE_QUALITY`; the HAL may still ignore any requested
+  mode. BALANCED and HIGH are hidden unless the camera advertises at least one
+  of their respective modes. Preference and preset persistence included. 299
+  JVM tests pass (5 new); APK compiles. Device verification pending.

@@ -46,6 +46,7 @@ import app.cameraplus.camera.FocusTimeout
 import app.cameraplus.camera.PhotoAspectRatio
 import app.cameraplus.camera.PhotoResolution
 import app.cameraplus.camera.SelfTimer
+import app.cameraplus.camera.StillQuality
 import app.cameraplus.camera.VideoFrameRate
 import app.cameraplus.camera.VideoQuality
 import app.cameraplus.ui.theme.DimWhite
@@ -71,6 +72,7 @@ fun ProcessingSheet(
     supportedVideoFrameRates: List<VideoFrameRate>,
     maximumPhotoResolutionSupported: Boolean,
     availableAntiBanding: List<AntiBanding>,
+    availableStillQuality: List<StillQuality>,
     screenFlashSupported: Boolean,
     hdrExtensionAvailable: Boolean,
     onCapturePreferencesChange: (CapturePreferences) -> Unit,
@@ -151,6 +153,12 @@ fun ProcessingSheet(
                         }) { value ->
                         PhotoResolution.entries.firstOrNull { it.label == value }?.let {
                             onCapturePreferencesChange(capturePreferences.copy(photoResolution = it))
+                        }
+                    }
+                    SettingsChoices("STILL QUALITY", capturePreferences.stillQuality.label,
+                        availableStillQuality.map { it.label }) { value ->
+                        StillQuality.entries.firstOrNull { it.label == value }?.let {
+                            onCapturePreferencesChange(capturePreferences.copy(stillQuality = it))
                         }
                     }
                     SettingsChoices("FLASH", capturePreferences.flashChoice.label,

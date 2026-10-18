@@ -59,4 +59,15 @@ class CaptureProfileTest {
             ),
         )
     }
+
+    @Test
+    fun highQualityStillProcessingLeavesTheZeroShutterLagPath() {
+        assertFalse(
+            CaptureProfile.usesZeroShutterLag(
+                zslSupported = true,
+                flashEnabled = false,
+                highQualityProcessingActive = true,
+            ),
+        )
+    }
 }

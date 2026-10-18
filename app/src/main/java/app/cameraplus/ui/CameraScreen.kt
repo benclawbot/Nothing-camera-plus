@@ -107,6 +107,7 @@ import app.cameraplus.camera.FlashChoice
 import app.cameraplus.camera.FocalPresets
 import app.cameraplus.camera.PhotoAspectRatio
 import app.cameraplus.camera.PhotoResolution
+import app.cameraplus.camera.StillQuality
 import app.cameraplus.camera.RawMode
 import app.cameraplus.camera.VideoFrameRate
 import app.cameraplus.camera.ModeZoomPlan
@@ -548,38 +549,43 @@ fun CameraScreen(
     }
 
     fun applyCapturePreferences(options: CapturePreferences) {
-        capturePreferences = options
-        flashChoice = options.flashChoice
-        photoAspectRatio = options.photoAspectRatio
+        val resolvedOptions = options.copy(
+            stillQuality = options.stillQuality.takeIf { it in capabilities.availableStillQuality }
+                ?: StillQuality.FAST,
+        )
+        capturePreferences = resolvedOptions
+        flashChoice = resolvedOptions.flashChoice
+        photoAspectRatio = resolvedOptions.photoAspectRatio
         photoResolution = if (capabilities.maximumPhotoResolutionSupported) {
-            options.photoResolution
+            resolvedOptions.photoResolution
         } else {
             PhotoResolution.STANDARD
         }
-        videoQuality = options.videoQuality
-        videoFrameRate = options.videoFrameRate
-        selfTimer = options.selfTimer
-        mirrorCapture = options.mirrorCapture
-        shutterSoundEnabled = options.shutterSoundEnabled
-        volumeKeyShutter = options.volumeKeyShutter
-        touchShutter = options.touchShutter
-        histogramArmed = options.histogramEnabled
-        zebrasArmed = options.zebrasEnabled
-        peakingArmed = options.peakingEnabled
-        ghostEnabled = options.ghostImage
-        photoHdrEnabled = options.photoHdrEnabled && capabilities.hdrExtensionAvailable
-        timeLapseSpeed = options.timeLapseSpeed
-        slowMotionFps = options.slowMotionFps
+        videoQuality = resolvedOptions.videoQuality
+        videoFrameRate = resolvedOptions.videoFrameRate
+        selfTimer = resolvedOptions.selfTimer
+        mirrorCapture = resolvedOptions.mirrorCapture
+        shutterSoundEnabled = resolvedOptions.shutterSoundEnabled
+        volumeKeyShutter = resolvedOptions.volumeKeyShutter
+        touchShutter = resolvedOptions.touchShutter
+        histogramArmed = resolvedOptions.histogramEnabled
+        zebrasArmed = resolvedOptions.zebrasEnabled
+        peakingArmed = resolvedOptions.peakingEnabled
+        ghostEnabled = resolvedOptions.ghostImage
+        photoHdrEnabled = resolvedOptions.photoHdrEnabled && capabilities.hdrExtensionAvailable
+        timeLapseSpeed = resolvedOptions.timeLapseSpeed
+        slowMotionFps = resolvedOptions.slowMotionFps
         session.setFlashChoice(flashChoice) { error -> status = error.message }
         session.setPhotoAspectRatio(photoAspectRatio) { error -> status = error.message }
         session.setPhotoResolution(photoResolution) { error -> status = error.message }
+        session.setStillQuality(resolvedOptions.stillQuality) { error -> status = error.message }
         videoQuality = session.setVideoQuality(videoQuality) { error -> status = error.message }
         videoFrameRate = session.setVideoFrameRate(videoFrameRate) { error -> status = error.message }
         session.setMirrorCaptureEnabled(mirrorCapture)
         session.setShutterSoundEnabled(shutterSoundEnabled)
         // Turning KEEP EXPOSURE on adopts the value that was dialled in;
         // turning it off hands the metering back to the camera's default.
-        evIndex = session.setExposureCompensationIndex(if (options.keepExposure) evIndex else 0)
+        evIndex = session.setExposureCompensationIndex(if (resolvedOptions.keepExposure) evIndex else 0)
     }
 
     /**
@@ -628,6 +634,7 @@ fun CameraScreen(
         session.setMirrorCaptureEnabled(mirrorCapture)
         session.setShutterSoundEnabled(shutterSoundEnabled)
         session.setAntiBanding(capturePreferences.antiBanding)
+        session.setStillQuality(capturePreferences.stillQuality)
         session.setBarcodeScanning(capturePreferences.barcodeScanning)
         session.setWatermarkOptions(watermark)
         session.setCaptureLocation(currentLocation)
@@ -676,9 +683,13 @@ fun CameraScreen(
             onZslChanged = { active ->
                 status = if (active) "Instant shutter ready" else null
             },
-            onCapabilities = { published ->
-                capabilities = published
-                if (!published.rawSupported) rawMode = RawMode.OFF
+                onCapabilities = { published ->
+                    capabilities = published
+                    if (capturePreferences.stillQuality !in published.availableStillQuality) {
+                        capturePreferences = capturePreferences.copy(stillQuality = StillQuality.FAST)
+                        capturePreferencesStore.save(currentPreferences())
+                    }
+                    if (!published.rawSupported) rawMode = RawMode.OFF
                 if (videoFrameRate !in published.supportedVideoFrameRates) {
                     videoFrameRate = published.supportedVideoFrameRates.first()
                 }
@@ -2406,6 +2417,7 @@ fun CameraScreen(
                 supportedVideoFrameRates = capabilities.supportedVideoFrameRates,
                 maximumPhotoResolutionSupported = capabilities.maximumPhotoResolutionSupported,
                 availableAntiBanding = capabilities.availableAntiBanding,
+                availableStillQuality = capabilities.availableStillQuality,
                 screenFlashSupported = screenFlashAvailable,
                 hdrExtensionAvailable = capabilities.hdrExtensionAvailable,
                 onCapturePreferencesChange = ::applyCapturePreferences,

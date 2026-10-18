@@ -10,6 +10,7 @@ import app.cameraplus.camera.FocusTimeout
 import app.cameraplus.camera.PhotoAspectRatio
 import app.cameraplus.camera.PhotoResolution
 import app.cameraplus.camera.SelfTimer
+import app.cameraplus.camera.StillQuality
 import app.cameraplus.camera.VideoFrameRate
 import app.cameraplus.camera.VideoQuality
 import app.cameraplus.camera.WhiteBalancePreset
@@ -41,6 +42,8 @@ data class CapturePreferences(
     /** Last exposure-compensation index the user dialled in. */
     val exposureCompensationIndex: Int = 0,
     val antiBanding: AntiBanding = AntiBanding.AUTO,
+    /** Still-processing quality: FAST keeps the instant shutter, HIGH leaves it. */
+    val stillQuality: StillQuality = StillQuality.FAST,
     val focusTimeout: FocusTimeout = FocusTimeout.OFF,
     val exposureBracket: ExposureBracket = ExposureBracket.OFF,
     /** Onion skin: hold the last shot over the viewfinder at low opacity. */
@@ -90,6 +93,7 @@ class CapturePreferencesStore(context: Context) {
         keepExposure = prefs.getBoolean(KEY_KEEP_EXPOSURE, false),
         exposureCompensationIndex = prefs.getInt(KEY_EXPOSURE_INDEX, 0),
         antiBanding = enumValue(prefs.getString(KEY_ANTI_BANDING, null), AntiBanding.AUTO),
+        stillQuality = enumValue(prefs.getString(KEY_STILL_QUALITY, null), StillQuality.FAST),
         focusTimeout = enumValue(prefs.getString(KEY_FOCUS_TIMEOUT, null), FocusTimeout.OFF),
         exposureBracket = enumValue(prefs.getString(KEY_BRACKET, null), ExposureBracket.OFF),
         ghostImage = prefs.getBoolean(KEY_GHOST, false),
@@ -163,6 +167,7 @@ class CapturePreferencesStore(context: Context) {
             .putBoolean(KEY_KEEP_EXPOSURE, options.keepExposure)
             .putInt(KEY_EXPOSURE_INDEX, options.exposureCompensationIndex)
             .putString(KEY_ANTI_BANDING, options.antiBanding.name)
+            .putString(KEY_STILL_QUALITY, options.stillQuality.name)
             .putString(KEY_FOCUS_TIMEOUT, options.focusTimeout.name)
             .putString(KEY_BRACKET, options.exposureBracket.name)
             .putBoolean(KEY_GHOST, options.ghostImage)
@@ -204,6 +209,7 @@ class CapturePreferencesStore(context: Context) {
         const val KEY_KEEP_EXPOSURE = "keep_exposure"
         const val KEY_EXPOSURE_INDEX = "exposure_index"
         const val KEY_ANTI_BANDING = "anti_banding"
+        const val KEY_STILL_QUALITY = "still_quality"
         const val KEY_FOCUS_TIMEOUT = "focus_timeout"
         const val KEY_BRACKET = "exposure_bracket"
         const val KEY_GHOST = "ghost_image"

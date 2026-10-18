@@ -8,7 +8,7 @@ An Android camera app, built from scratch as a clean-room project.
 
 ## Status
 
-Current release: **v1.2.0** (`versionCode 5`), debug-signed, `minSdk 33` (Android 13+), developed and validated on a Nothing Phone (A001), Android 16 / API 36. `main` additionally carries the unreleased v1.1-plan work below (expert overlays, sticky exposure, bracketing, presets and the rest); all of it is marked **device verification pending** until it has been through a hardware pass.
+Current release: **v1.2.0** (`versionCode 5`), debug-signed, `minSdk 33` (Android 13+), developed and validated on a Nothing Phone (A001), Android 16 / API 36. `main` additionally carries the unreleased v1.1-plan features and a new image/zoom-quality pass; these additions are marked **device verification pending** until they have been through a hardware pass.
 
 | Area | State |
 | --- | --- |
@@ -36,13 +36,15 @@ Current release: **v1.2.0** (`versionCode 5`), debug-signed, `minSdk 33` (Androi
 | Launcher shortcuts | Implemented; device verification pending |
 | Continuous shot (hold shutter) | Implemented; device verification pending |
 | Focal-length zoom labels | Implemented; device verification pending |
+| Resolution-aware zoom lens selection | Implemented; unit-tested; device verification pending |
+| Camera2 still-quality modes (FAST / BALANCED / HIGH) | Implemented; capability-gated; device verification pending |
 | Restore defaults | Implemented; device verification pending |
 | Watermark camera parameters | Implemented; device verification pending |
 | Captures in DCIM/Camera | Implemented; device verification pending |
 | Gallery app picker | Implemented; device verification pending |
 | In-app video playback | Implemented; device verification pending |
 | Gallery hand-off and in-app gallery | Done, device-verified |
-| 288 JVM unit tests | Green |
+| 299 JVM unit tests | Green |
 
 Feature-by-feature status against the original-app inventory, including what is a clean-room substitute rather than a reproduction, is tracked in [notes/FEATURE-COVERAGE.md](notes/FEATURE-COVERAGE.md); device checks are logged in [notes/PLAN-v1.1.md](notes/PLAN-v1.1.md).
 
@@ -56,6 +58,11 @@ Sourced from Nothing community threads, Open Camera and GrapheneOS Secure Camera
 4. **Shooting flow** — default focal (24/28/35 mm) with 1x-chip cycling, self-timer 20/30/60 s with a shot series and spoken countdown, barcode types beyond QR.
 5. **Metadata privacy** — EXIF stripping (GPS plus device/lens identity) and EXIF author/copyright stamping.
 6. **Presets and pinning** — named presets holding every capture setting and the look, plus a top-bar chip that keeps one setting one tap away.
+
+### Image and zoom quality pass
+
+- **Resolution-aware zoom source lens:** between optical stops, choose the lens with the most estimated sensor pixels over the requested view (sensor readout ÷ digital crop ratio²). Preserve the currently bound lens while it retains at least half the best score, avoiding rebinds for small gains. Exact optical stops still select their own lens.
+- **Still quality:** FAST keeps platform defaults and the instant-shutter path; BALANCED requests only advertised preview-tuned noise/edge modes; HIGH asks for advertised high-quality Camera2 processing stages, selects CameraX's maximize-quality capture mode and leaves zero-shutter-lag. Missing modes are not requested, and Camera2 hints may be ignored by the HAL.
 
 Nothing here is claimed as hardware-verified yet; see the status table above.
 
@@ -195,7 +202,7 @@ A clean-room tracking autofocus for both photo modes and video:
 
 ### Settings sheet
 
-- All capture preferences in one categorised sheet: flash/screen flash, aspect ratio, resolution, HDR, RAW, video quality/fps, self-timer (delay, shot series, voice countdown), grid, volume-key shutter, touch shutter, shutter sound, mirror capture, focus timeout, anti-flicker, exposure bracketing, ghost image, default focal, barcode types, metadata privacy, watermark, processing intent and looks.
+- All capture preferences in one categorised sheet: flash/screen flash, aspect ratio, resolution, still quality, HDR, RAW, video quality/fps, self-timer (delay, shot series, voice countdown), grid, volume-key shutter, touch shutter, shutter sound, mirror capture, focus timeout, anti-flicker, exposure bracketing, ghost image, default focal, barcode types, metadata privacy, watermark, processing intent and looks.
 - Preferences persist across launches and are applied live where the session allows.
 - **PRESETS** save the whole configuration under a name for one-tap recall, **PIN TO TOP BAR** keeps a single setting on the viewfinder, and **RESTORE DEFAULTS** resets capture settings, look and watermark in one tap.
 
@@ -210,7 +217,7 @@ A clean-room tracking autofocus for both photo modes and video:
 
 - Device-verified on Nothing Phone (A001), Android 16: preview, still capture (pose-aware uprighting), ZSL, gallery hand-off, tracking (photo/video/front camera), processing sheet, expert controls and the camera-settings flows.
 - Feature rows marked 🟡 in [notes/FEATURE-COVERAGE.md](notes/FEATURE-COVERAGE.md) are implemented but depend on hardware/provider behaviour and are not guaranteed on every device (slow motion rates, time-lapse cadence, extensions, RAW output, stabilization).
-- The unreleased work on `main` (overlays, sticky exposure, anti-flicker, focus timeout, bracketing, ghost image, RAW-only, default focal, timer series, barcode types, metadata privacy, presets and pinning) compiles and has JVM coverage, but has not been through a hardware pass: it is listed as **device verification pending** everywhere rather than claimed as working.
+- The unreleased work on `main` (overlays, sticky exposure, anti-flicker, focus timeout, bracketing, ghost image, RAW-only, default focal, timer series, barcode types, metadata privacy, presets/pinning, resolution-aware zoom and still quality) compiles and has JVM coverage, but has not been through a hardware pass: it is listed as **device verification pending** everywhere rather than claimed as working.
 - Vendor-only features that this project intentionally does **not** reproduce: beauty-video pipelines, AI scene detection, gender estimate, glyph/LED flash, Morpho/Tetras LUT packs, motion photo, Ultra HDR/Ultra XDR, 50 MP remosaic, super-resolution, TurboNight, tele-macro, depth-segmentation portrait and OEM panorama engines. Clean-room substitutes are labelled as such in the app and in the coverage matrix; no parity is claimed for them.
 
 ## Building
@@ -222,7 +229,7 @@ Requirements:
 
 ```bash
 ./gradlew :app:assembleDebug       # debug APK
-./gradlew :app:testDebugUnitTest   # JVM unit tests (288)
+./gradlew :app:testDebugUnitTest   # JVM unit tests (299)
 ```
 
 `local.properties` (git-ignored) points at your SDK:
@@ -239,7 +246,8 @@ Runtime requirement: Android 13 or newer (`minSdk 33` — the preview-parity GL 
   - `camera/CameraSession.kt` — CameraX binding: preview, still capture, video, RAW, focus/EV, subject tracking and MediaStore output
   - `camera/SubjectTracker.kt`, `camera/TrackingGeometry.kt`, `camera/SubjectTrackingAnalyzer.kt` — clean-room subject tracking (tracker maths, view↔frame geometry, analysis plumbing)
   - `camera/Camera2Recorder.kt` — Camera2 high-speed slow motion and MediaRecorder time lapse
-  - `camera/LensPlan.kt`, `camera/RecorderPlan.kt` — lens/zoom and recorder planning math
+  - `camera/LensPlan.kt`, `camera/RecorderPlan.kt` — resolution-aware lens/zoom and recorder planning math
+  - `camera/StillQuality.kt` — still quality choices and the platform request plan
   - `camera/Panorama*`, `camera/NightMerger.kt`, `camera/PortraitRenderer.kt` — bounded software mode prototypes
   - `camera/LookEffect.kt` — GL preview look (preview parity)
   - `camera/VideoProfile.kt` — stabilization policy, zoom/lens plan and per-mode zoom caps
@@ -252,7 +260,7 @@ Runtime requirement: Android 13 or newer (`minSdk 33` — the preview-parity GL 
   - `ui/CameraScreen.kt`, `ui/GalleryScreen.kt`, `ui/FocusControls.kt`, `ui/CompositionOverlay.kt`, `ui/ProcessingSheet.kt`, `ui/CameraPlusApp.kt`, `ui/ViewfinderOverlays.kt`, `ui/GhostImage.kt`, `ui/VoiceCountdown.kt`, `ui/theme/Theme.kt` — Compose UI
   - `processing/` — software still pipeline (`ImageProcessor` pure math, `JpegProcessor` glue, `WatermarkRenderer`)
   - `settings/` — capture/processing/watermark preference models, the preset codec and stores
-- `app/src/test/` — JVM unit tests (288)
+- `app/src/test/` — JVM unit tests (299)
 - `dist/` — built APKs
 
 ## License

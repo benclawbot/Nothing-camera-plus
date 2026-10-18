@@ -24,6 +24,8 @@ data class SessionCapabilities(
     val rawSupported: Boolean = false,
     /** Anti-banding modes the camera advertises (always at least AUTO). */
     val availableAntiBanding: List<AntiBanding> = listOf(AntiBanding.AUTO),
+    /** Still-processing quality levels this camera can be asked for. */
+    val availableStillQuality: List<StillQuality> = listOf(StillQuality.FAST),
     val stabilization: StabilizationLevel = StabilizationLevel.NONE,
     val isoRange: IntRange? = null,
     val exposureRange: LongRange? = null,

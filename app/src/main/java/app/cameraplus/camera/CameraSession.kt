@@ -235,6 +235,8 @@ class CameraSession(
     private var macroEnabled = false
     private var antiBandingMode = AntiBanding.AUTO
     private var availableAntiBandingModes: List<AntiBanding> = listOf(AntiBanding.AUTO)
+    private var stillQuality = StillQuality.FAST
+    private var availableStillQuality: List<StillQuality> = StillQuality.entries
     private var barcodeScanning = BarcodeScanning.QR_ONLY
     private var stripMetadata = false
     private var exifAuthor: String? = null
@@ -427,15 +429,8 @@ class CameraSession(
         }
         if (flashChoice == choice) return
         flashChoice = choice
-        val desiredZsl = CaptureProfile.usesZeroShutterLag(
-            zslSupported = zeroShutterLagSupported && requestedExtensionMode == ExtensionMode.NONE,
-            flashEnabled = flashChoice != FlashChoice.OFF,
-            rawEnabled = rawMode.enabled,
-            manualControlsActive = !manualControls.isAuto(),
-            highResolutionActive = photoResolution == PhotoResolution.MAXIMUM,
-        )
         val appliedZsl = appliedCaptureMode == ImageCapture.CAPTURE_MODE_ZERO_SHUTTER_LAG
-        if (desiredZsl != appliedZsl) {
+        if (desiredZeroShutterLag() != appliedZsl) {
             // The effective capture mode changes with flash: rebind so the
             // session really runs in the mode the policy picked.
             rebind(onError)
@@ -1035,6 +1030,97 @@ class CameraSession(
         AntiBanding.AUTO -> null
         AntiBanding.HZ_50 -> android.hardware.camera2.CameraMetadata.CONTROL_AE_ANTIBANDING_MODE_50HZ
         AntiBanding.HZ_60 -> android.hardware.camera2.CameraMetadata.CONTROL_AE_ANTIBANDING_MODE_60HZ
+    }
+
+    /**
+     * Sets the still-capture processing quality. Only stages the bound camera
+     * advertises are requested, and [StillQuality.HIGH] additionally leaves
+     * the zero-shutter-lag path, so the change needs a rebind to take effect.
+     */
+    fun setStillQuality(quality: StillQuality, onError: (Exception) -> Unit = {}) {
+        if (stillQuality == quality) return
+        val usable = quality in availableStillQuality
+        stillQuality = if (usable) quality else StillQuality.FAST
+        if (!usable) {
+            onError(
+                IllegalStateException("${quality.label} still quality is not reported by this camera"),
+            )
+        }
+        if (mode != SessionMode.VIDEO) rebind(onError)
+    }
+
+    /** The still-capture quality the session is currently asking for. */
+    fun currentStillQuality(): StillQuality = stillQuality
+
+    /**
+     * Asks the still request for the processing the chosen quality wants, for
+     * the stages the camera actually lists (`<stage>_AVAILABLE_*`). A stage it
+     * does not advertise is simply left at the platform default, so a modest
+     * HAL is never sent a mode it did not claim.
+     */
+    private fun applyStillQuality(builder: ImageCapture.Builder, cameraId: String) {
+        val plan = StillQualityPlan.forQuality(stillQuality)
+        if (plan == StillQualityPlan.NONE) return
+        val stages = cameraFlags[cameraId]?.stillStages.orEmpty()
+        val extender = Camera2Interop.Extender(builder)
+        plan.requested.forEach { (feature, mode) ->
+            val key = stillRequestKey(feature)
+            val code = stillModeCode(feature, mode)
+            if (key != null && code != null && code in stages[feature].orEmpty()) {
+                extender.setCaptureRequestOption(key, code)
+            }
+        }
+    }
+
+    private fun stillRequestKey(feature: StillFeature): CaptureRequest.Key<Int>? = when (feature) {
+        StillFeature.NOISE_REDUCTION -> CaptureRequest.NOISE_REDUCTION_MODE
+        StillFeature.EDGE -> CaptureRequest.EDGE_MODE
+        StillFeature.SHADING -> CaptureRequest.SHADING_MODE
+        StillFeature.ABERRATION -> CaptureRequest.COLOR_CORRECTION_ABERRATION_MODE
+        StillFeature.HOT_PIXEL -> CaptureRequest.HOT_PIXEL_MODE
+        StillFeature.DISTORTION -> CaptureRequest.DISTORTION_CORRECTION_MODE
+    }
+
+    private fun stillModeCode(feature: StillFeature, mode: StillMode): Int? = when (mode) {
+        StillMode.PLATFORM_DEFAULT -> null
+        StillMode.ZERO_SHUTTER_LAG -> when (feature) {
+            StillFeature.NOISE_REDUCTION ->
+                android.hardware.camera2.CameraMetadata.NOISE_REDUCTION_MODE_ZERO_SHUTTER_LAG
+            StillFeature.EDGE ->
+                android.hardware.camera2.CameraMetadata.EDGE_MODE_ZERO_SHUTTER_LAG
+            else -> null
+        }
+        StillMode.HIGH_QUALITY -> when (feature) {
+            StillFeature.NOISE_REDUCTION ->
+                android.hardware.camera2.CameraMetadata.NOISE_REDUCTION_MODE_HIGH_QUALITY
+            StillFeature.EDGE ->
+                android.hardware.camera2.CameraMetadata.EDGE_MODE_HIGH_QUALITY
+            StillFeature.SHADING ->
+                android.hardware.camera2.CameraMetadata.SHADING_MODE_HIGH_QUALITY
+            StillFeature.ABERRATION ->
+                android.hardware.camera2.CameraMetadata.COLOR_CORRECTION_ABERRATION_MODE_HIGH_QUALITY
+            StillFeature.HOT_PIXEL ->
+                android.hardware.camera2.CameraMetadata.HOT_PIXEL_MODE_HIGH_QUALITY
+            StillFeature.DISTORTION ->
+                android.hardware.camera2.CameraMetadata.DISTORTION_CORRECTION_MODE_HIGH_QUALITY
+        }
+    }
+
+    /** FAST/BALANCED are safe defaults; HIGH appears only if this lens
+     * advertises at least one full-readout processing stage. */
+    private fun supportedStillQualities(cameraId: String): List<StillQuality> {
+        val stages = cameraFlags[cameraId]?.stillStages.orEmpty()
+        val balanced = StillQualityPlan.forQuality(StillQuality.BALANCED).requested.any {
+                (feature, mode) ->
+            val code = stillModeCode(feature, mode)
+            code != null && code in stages[feature].orEmpty()
+        }
+        val hasHighQualityStage = StillQualityPlan.forQuality(StillQuality.HIGH).requested.any {
+                (feature, mode) ->
+            val code = stillModeCode(feature, mode)
+            code != null && code in stages[feature].orEmpty()
+        }
+        return StillQualitySupport.available(balanced, hasHighQualityStage)
     }
 
     fun setMirrorCaptureEnabled(enabled: Boolean) {
@@ -1859,6 +1945,8 @@ class CameraSession(
             photoResolution = PhotoResolution.STANDARD
         }
         zeroShutterLagSupported = cameraFlags[targetId]?.zeroShutterLag ?: false
+        availableStillQuality = supportedStillQualities(targetId)
+        if (stillQuality !in availableStillQuality) stillQuality = StillQuality.FAST
         val captureMode = if (mode == SessionMode.VIDEO) {
             ImageCapture.CAPTURE_MODE_MINIMIZE_LATENCY
         } else {
@@ -2052,6 +2140,7 @@ class CameraSession(
                 )
             }
             applyManualControls(captureBuilder)
+            applyStillQuality(captureBuilder, targetId)
             val built = captureBuilder.build().also {
                 it.setCropAspectRatio(Rational(photoAspectRatio.numerator, photoAspectRatio.denominator))
                 it.flashMode = flashMode()
@@ -2318,6 +2407,26 @@ class CameraSession(
                 noiseReduction = camera2.getCameraCharacteristic(
                     CameraCharacteristics.NOISE_REDUCTION_AVAILABLE_NOISE_REDUCTION_MODES,
                 )?.contains(CaptureRequest.NOISE_REDUCTION_MODE_FAST) == true,
+                stillStages = mapOf(
+                    StillFeature.NOISE_REDUCTION to (camera2.getCameraCharacteristic(
+                        CameraCharacteristics.NOISE_REDUCTION_AVAILABLE_NOISE_REDUCTION_MODES,
+                    )?.toSet() ?: emptySet()),
+                    StillFeature.EDGE to (camera2.getCameraCharacteristic(
+                        CameraCharacteristics.EDGE_AVAILABLE_EDGE_MODES,
+                    )?.toSet() ?: emptySet()),
+                    StillFeature.SHADING to (camera2.getCameraCharacteristic(
+                        CameraCharacteristics.SHADING_AVAILABLE_MODES,
+                    )?.toSet() ?: emptySet()),
+                    StillFeature.ABERRATION to (camera2.getCameraCharacteristic(
+                        CameraCharacteristics.COLOR_CORRECTION_AVAILABLE_ABERRATION_MODES,
+                    )?.toSet() ?: emptySet()),
+                    StillFeature.HOT_PIXEL to (camera2.getCameraCharacteristic(
+                        CameraCharacteristics.HOT_PIXEL_AVAILABLE_HOT_PIXEL_MODES,
+                    )?.toSet() ?: emptySet()),
+                    StillFeature.DISTORTION to (camera2.getCameraCharacteristic(
+                        CameraCharacteristics.DISTORTION_CORRECTION_AVAILABLE_MODES,
+                    )?.toSet() ?: emptySet()),
+                ),
             )
             specs += LensSpec(
                 cameraId = camera2.cameraId,
@@ -2463,6 +2572,9 @@ class CameraSession(
         if (antiBandingMode !in availableAntiBanding) antiBandingMode = AntiBanding.AUTO
         val boundId = bound?.cameraId
         val flags = boundId?.let { cameraFlags[it] }
+        val stillQualityChoices = supportedStillQualities(boundId ?: "")
+        availableStillQuality = stillQualityChoices
+        if (stillQuality !in stillQualityChoices) stillQuality = StillQuality.FAST
         val layout = lensLayout
         val liveZoom = boundCamera?.cameraInfo?.zoomState?.value
         val evRange = boundCamera?.cameraInfo?.exposureState?.exposureCompensationRange
@@ -2492,6 +2604,7 @@ class CameraSession(
                 // RAW follows the lens in use, not just the first back camera.
                 rawSupported = flags?.raw == true,
                 availableAntiBanding = availableAntiBanding,
+                availableStillQuality = stillQualityChoices,
                 stabilization = StabilizationProfile.choose(
                     previewSupported = videoStabilization?.contains(
                         android.hardware.camera2.CameraMetadata
@@ -2549,19 +2662,25 @@ class CameraSession(
         onCapabilities(published)
     }
 
-    private fun desiredCaptureMode(): Int =
-        if (CaptureProfile.usesZeroShutterLag(
-                zslSupported = zeroShutterLagSupported && requestedExtensionMode == ExtensionMode.NONE,
-                flashEnabled = flashChoice != FlashChoice.OFF,
-                rawEnabled = rawMode.enabled,
-                manualControlsActive = !manualControls.isAuto(),
-                highResolutionActive = photoResolution == PhotoResolution.MAXIMUM,
-            )
-        ) {
-            ImageCapture.CAPTURE_MODE_ZERO_SHUTTER_LAG
-        } else {
-            ImageCapture.CAPTURE_MODE_MINIMIZE_LATENCY
-        }
+    /**
+     * The capture mode the current preferences call for. High-quality still
+     * processing and the maximum-resolution request both come from a full
+     * readout, which the zero-shutter-lag stream cannot supply.
+     */
+    private fun desiredZeroShutterLag(): Boolean = CaptureProfile.usesZeroShutterLag(
+        zslSupported = zeroShutterLagSupported && requestedExtensionMode == ExtensionMode.NONE,
+        flashEnabled = flashChoice != FlashChoice.OFF,
+        rawEnabled = rawMode.enabled,
+        manualControlsActive = !manualControls.isAuto(),
+        highResolutionActive = photoResolution == PhotoResolution.MAXIMUM,
+        highQualityProcessingActive = StillQualityPlan.forQuality(stillQuality).blocksZeroShutterLag,
+    )
+
+    private fun desiredCaptureMode(): Int = when {
+        desiredZeroShutterLag() -> ImageCapture.CAPTURE_MODE_ZERO_SHUTTER_LAG
+        stillQuality == StillQuality.HIGH -> ImageCapture.CAPTURE_MODE_MAXIMIZE_QUALITY
+        else -> ImageCapture.CAPTURE_MODE_MINIMIZE_LATENCY
+    }
 
     private fun flashMode(): Int = when (flashChoice) {
         FlashChoice.OFF -> ImageCapture.FLASH_MODE_OFF
@@ -2727,6 +2846,11 @@ private data class CameraFlags(
     val maxJpegPixels: Long,
     val opticalStabilization: Boolean,
     val noiseReduction: Boolean,
+    /**
+     * The processing modes the camera lists per still-quality stage. Requests
+     * are gated on this so no stage is asked for a mode it did not advertise.
+     */
+    val stillStages: Map<StillFeature, Set<Int>> = emptyMap(),
 )
 
 /** Video finalize carried an error; the partial entry is deleted first. */

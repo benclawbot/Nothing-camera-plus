@@ -100,6 +100,7 @@ Nothing community's own camera feedback threads (`nothing.community`).
 | HDR toggle (off/auto/on/force) | 🟡 | single-frame software HDR + capability-gated CameraX HDR extension; no Force/auto scene detection |
 | Ultra HDR | 🚫 | vendor format |
 | Quality 12MP / max JPEG | 🟡 | selects CameraX highest advertised output; does not promise 50MP remosaic |
+| Still capture quality (FAST / BALANCED / HIGH) | 🟡 | FAST leaves HAL defaults, BALANCED requests advertised preview-tuned NR/edge modes, HIGH requests only advertised high-quality Camera2 processing stages and leaves ZSL; HAL may ignore hints, hardware validation pending |
 | Motion photo (live) | 🚫 | vendor capture pipeline |
 | RAW / Pro RAW | 🟡 | fixed wrong CameraX overload; hardware capture still unverified |
 | Flash off/on/torch/auto/screen | 🟡 | off/on/auto, ScreenFlashView and video torch; Glyph/LED variants absent |

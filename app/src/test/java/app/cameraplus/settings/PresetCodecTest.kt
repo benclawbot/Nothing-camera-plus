@@ -8,6 +8,7 @@ import app.cameraplus.camera.FocusTimeout
 import app.cameraplus.camera.PhotoAspectRatio
 import app.cameraplus.camera.PhotoResolution
 import app.cameraplus.camera.SelfTimer
+import app.cameraplus.camera.StillQuality
 import app.cameraplus.camera.WhiteBalancePreset
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -29,6 +30,7 @@ class PresetCodecTest {
             keepExposure = true,
             exposureCompensationIndex = -4,
             antiBanding = AntiBanding.HZ_50,
+            stillQuality = StillQuality.HIGH,
             focusTimeout = FocusTimeout.FIFTEEN_SECONDS,
             exposureBracket = ExposureBracket.FIVE_SHOT,
             ghostImage = true,
