@@ -8,13 +8,13 @@ An Android camera app, built from scratch as a clean-room project.
 
 ## Status
 
-Current release: **v1.2.0** (`versionCode 5`), debug-signed, `minSdk 33` (Android 13+), developed and validated on a Nothing Phone (A001), Android 16 / API 36. `main` additionally carries the unreleased v1.1-plan features and a new image/zoom-quality pass; these additions are marked **device verification pending** until they have been through a hardware pass.
+Current release: **v1.3.0** (`versionCode 6`), debug-signed, `minSdk 33` (Android 13+). Installed and launch-smoke-tested on a Nothing Phone (A001), Android 16 / API 36. The new panorama, quality/composite, permission and latest-capture hand-off paths still need full device verification; capability-dependent behavior is marked pending rather than claimed as parity.
 
 | Area | State |
 | --- | --- |
-| Still capture pipeline (ZSL, queueing, background post-processing) | Previously device-verified; pose-aware orientation change awaits re-test |
-| Video pipeline (Recorder, stabilization, OIS, snapshots, mute) | Previously device-verified; NR and Camera2 recorder changes await re-test |
-| Modes: Photo, Video, Portrait, Beauty, Night, Panorama, Macro, QR, Slow motion, Time lapse, Expert | Implemented; live panorama / Camera2 recorder changes await device verification |
+| Still capture pipeline (ZSL, queueing, background post-processing) | Previously device-verified; recent capture/quality changes await re-test |
+| Video pipeline (Recorder, stabilization, OIS, snapshots, mute) | Previously device-verified; recent UI/session changes await re-test |
+| Modes: Photo, Video, Portrait, Beauty, Night, Panorama, Macro, QR, Slow motion, Time lapse, Expert | Implemented; panorama improvements / Camera2 recorder changes await device verification |
 | Expert manual controls (ISO / shutter / focus / EV / WB) | Done, device-verified |
 | Expert histogram | Implemented; device verification pending |
 | Expert zebra stripes | Implemented; device verification pending |
@@ -47,39 +47,29 @@ Current release: **v1.2.0** (`versionCode 5`), debug-signed, `minSdk 33` (Androi
 | Watermark camera parameters | Implemented; device verification pending |
 | Captures in DCIM/Camera | Implemented; device verification pending |
 | Gallery app picker | Implemented; device verification pending |
-| System gallery hand-off + lower-left last-capture preview | Handoff previously device-verified; preview awaits device verification |
+| System gallery hand-off + lower-left last-capture preview | Photo preview and external Google Photos hand-off verified on A001; video hand-off awaits verification |
 | 311 JVM unit tests | Green |
 
 Feature-by-feature status against the original-app inventory, including what is a clean-room substitute rather than a reproduction, is tracked in [notes/FEATURE-COVERAGE.md](notes/FEATURE-COVERAGE.md); device checks are logged in [notes/PLAN-v1.1.md](notes/PLAN-v1.1.md).
 
-### Unreleased on `main`
+### v1.3.0 highlights
 
-Sourced from Nothing community threads, Open Camera and GrapheneOS Secure Camera, in six batches (one commit each, with JVM tests and updated tracking docs per batch):
+This release gathers clean-room improvements prompted by Nothing community feedback and ideas from Open Camera, GrapheneOS Secure Camera and Pixel Camera:
 
-1. **Expert overlays** — zebra stripes and focus peaking sharing the histogram's analysis stream.
-2. **Exposure** — sticky exposure (KEEP EXPOSURE), anti-flicker 50/60 Hz anti-banding, GrapheneOS-style focus timeout.
-3. **Photographer kit** — exposure bracketing (3/5 shots at ±2 EV), ghost-image onion skin, RAW-ONLY mode.
-4. **Shooting flow** — default focal (24/28/35 mm) with 1x-chip cycling, self-timer 20/30/60 s with a shot series and spoken countdown, barcode types beyond QR.
-5. **Metadata privacy** — EXIF stripping (GPS plus device/lens identity) and EXIF author/copyright stamping.
-6. **Presets and pinning** — named presets holding every capture setting and the look, plus a top-bar chip that keeps one setting one tap away.
+- **Capture controls:** histogram/zebra/focus-peaking overlays, sticky EV, advertised 50/60 Hz anti-banding, focus timeout, exposure and focus bracketing, RAW-only, timer series/voice countdown, metadata privacy, named presets and up to four quick-access pins.
+- **Image and zoom quality:** resolution-aware lens selection; capability-gated FAST/BALANCED/HIGH still quality; Android 14+ CameraX Ultra HDR output when supported; optional exposure-fusion HDR, focus-assist loupe, bounded focus stack, and auto-level for processed JPEGs.
+- **Panorama management:** waypoint guidance, 40–65% overlap keyframes, slow-down feedback, AE/AWB lock where reported, and explicit save/cancel controls.
+- **Overall UX:** batched preset/settings rebinds, timer cancellation on mode changes, permission recovery through App Settings, accessible stateful controls and external-gallery review with a latest-capture thumbnail.
 
-### Image and zoom quality pass
-
-- **Resolution-aware zoom source lens:** between optical stops, choose the lens with the most estimated sensor pixels over the requested view (sensor readout ÷ digital crop ratio²). Preserve the currently bound lens while it retains at least half the best score, avoiding rebinds for small gains. Exact optical stops still select their own lens.
-- **Still quality:** FAST keeps platform defaults and the instant-shutter path; BALANCED requests only advertised preview-tuned noise/edge modes; HIGH asks for advertised high-quality Camera2 processing stages, selects CameraX's maximize-quality capture mode and leaves zero-shutter-lag. Missing modes are not requested, and Camera2 hints may be ignored by the HAL.
-- **Ultra HDR:** capability-gated public CameraX JPEG_R output on Android 14+; the gain map is preserved only on a direct standard-resolution capture, so software looks, watermarking, mirroring, metadata edits, auto-level, maximum-resolution capture and bracket sequences use SDR instead.
-- **Bracket HDR:** optional bounded-resolution exposure fusion aligns small translations, weights well-exposed samples, rejects large radiance outliers and tone-maps an SDR composite; users may keep the original separate bracket captures instead.
-- **Focus assist and stacking:** a temporary 3× preview loupe appears while adjusting manual focus; optional 3/5-plane near-to-far focus bracketing uses a local sharpness stack. Static subjects/tripod are recommended; focus breathing and motion can leave seams.
-- **Auto-level:** optional small-tilt correction to processed JPEG output, capped at 8° with a fill crop. RAW/DNG stays untouched.
-
-Nothing here is claimed as hardware-verified yet; see the status table above.
+Software merges remain bounded-resolution approximations; Camera2/CameraX capabilities and vendor behavior vary. New camera paths are not presented as hardware-verified until the full device checklist passes.
 
 ## Download
 
-- [`cameraplus-1.2.0-debug.apk`](https://github.com/benclawbot/Nothing-camera-plus/releases/tag/v1.2.0) — debug-signed, for Android 13+. The same file is attached to the v1.2.0 release.
+- [`cameraplus-1.3.0-debug.apk`](https://github.com/benclawbot/Nothing-camera-plus/releases/download/v1.3.0/cameraplus-1.3.0-debug.apk) — debug-signed, for Android 13+. Also attached to the [v1.3.0 release](https://github.com/benclawbot/Nothing-camera-plus/releases/tag/v1.3.0).
+- SHA-256: `dfc92323e7d9948cdf49bce477540b5da23a44c95fa614d6489d164d682fca4d`
 - Historical builds live in [dist/](dist/) and on the [releases page](https://github.com/benclawbot/Nothing-camera-plus/releases).
 
-Install by sideloading (`adb install cameraplus-1.2.0-debug.apk`) or by opening the file on the device.
+Install/update by sideloading (`adb install -r cameraplus-1.3.0-debug.apk`) or by opening the file on the device.
 
 ## Features
 
@@ -226,7 +216,7 @@ A clean-room tracking autofocus for both photo modes and video:
 
 - Device-verified on Nothing Phone (A001), Android 16: preview, still capture (pose-aware uprighting), ZSL, gallery hand-off, tracking (photo/video/front camera), processing sheet, expert controls and the camera-settings flows.
 - Feature rows marked 🟡 in [notes/FEATURE-COVERAGE.md](notes/FEATURE-COVERAGE.md) are implemented but depend on hardware/provider behaviour and are not guaranteed on every device (slow motion rates, time-lapse cadence, extensions, RAW output, stabilization).
-- The unreleased work on `main` (overlays, sticky exposure, anti-flicker, focus timeout, bracketing/fusion/stacking, focus assist, auto-level, Ultra HDR, ghost image, RAW-only, default focal, timer series, barcode types, metadata privacy, presets/quick-access pins, resolution-aware zoom, still quality and the latest-capture preview) compiles and has JVM coverage, but has not been through a hardware pass: it is listed as **device verification pending** everywhere rather than claimed as working.
+- The v1.3.0 additions compile and have JVM coverage. The app was installed and launch-smoke-tested on A001/Android 16, but panorama capture, Ultra HDR support, bracket/focus composites, permission recovery and gallery-preview behavior still need a full hardware pass: they remain **device verification pending** rather than claimed as parity.
 - Vendor-only features that this project intentionally does **not** reproduce: beauty-video pipelines, AI scene detection, gender estimate, glyph/LED flash, Morpho/Tetras LUT packs, motion photo, Ultra XDR, 50 MP remosaic, super-resolution, TurboNight, tele-macro, depth-segmentation portrait and OEM panorama engines. Clean-room substitutes are labelled as such in the app and in the coverage matrix; no parity is claimed for them.
 
 ## Building

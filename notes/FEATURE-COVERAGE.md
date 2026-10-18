@@ -202,7 +202,7 @@ Nothing community's own camera feedback threads (`nothing.community`).
 |---|---|---|
 | Processing sheet (tone/skin/sharp/…) | ✅ | Includes clean-room Natural/B&W/Warm/Cool/Vivid/Vintage looks |
 | Volume-key and touch shutter | ✅ | both toggles ship in the processing sheet and are applied to their gestures; smile shutter is not implemented |
-| Latest-capture review | 🟡 | lower-left shutter circle previews latest Camera+ photo/video and opens the installed system gallery directly on that item; no in-app gallery fallback; device preview/intent behavior pending |
+| Latest-capture review | 🟡 | lower-left shutter circle previews the latest photo and opens Google Photos on its item (confirmed on A001); video-item hand-off remains unverified; no in-app gallery fallback |
 | Tap-to-focus/meter | 🟡 | CameraX metering action; hardware behavior unverified |
 | Viewfinder exposure-compensation control | 🟡 | EV slider wired to CameraX; hardware behavior unverified |
 | Long-press focus/meter lock | 🟡 | long-duration metering action; hardware behavior unverified |

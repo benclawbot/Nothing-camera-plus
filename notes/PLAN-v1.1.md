@@ -390,4 +390,12 @@
   gallery UI is removed: a lower-left circular latest photo/video thumbnail
   launches the installed external gallery directly on its MediaStore URI, with
   an explicit no-gallery message instead of an in-app fallback. JVM suite
-  remains at 311; APK compiles. Device verification pending for camera/galleries.
+  remains at 311; APK compiles. New capture behaviors remain pending a full
+  hardware pass.
+- 2026-10-19: v1.3.0 install/release preparation. VersionCode 6 / versionName
+  1.3.0 was installed as an in-place update on the connected Nothing Phone
+  A001 (Android 16), and MainActivity launch-smoke-tested. The lower-left
+  latest-photo preview is present and its hand-off resolves to Google Photos;
+  user confirmed the gallery experience works. Video hand-off and the other
+  new capture pipelines still need their full device checklist. The debug APK
+  has SHA-256 `dfc92323e7d9948cdf49bce477540b5da23a44c95fa614d6489d164d682fca4d`.
