@@ -1,4 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">Camera+</string>
+    <string name="shortcut_photo">Photo</string>
+    <string name="shortcut_selfie">Selfie</string>
+    <string name="shortcut_video">Video</string>
+    <string name="shortcut_portrait">Portrait</string>
+    <string name="shortcut_time_lapse">Time lapse</string>
 </resources>

@@ -75,6 +75,7 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -90,6 +91,8 @@ import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.semantics.onClick as semanticsOnClick
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontFamily
@@ -112,6 +115,7 @@ import app.cameraplus.camera.ManualControls
 import app.cameraplus.camera.CameraSession
 import app.cameraplus.camera.Camera2Recorder
 import app.cameraplus.camera.CaptureTimer
+import app.cameraplus.camera.ContinuousShotPlan
 import app.cameraplus.camera.NightMerger
 import app.cameraplus.camera.Direction
 import app.cameraplus.camera.PanoramaCapture
@@ -143,6 +147,7 @@ import kotlin.math.roundToInt
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.suspendCancellableCoroutine
@@ -194,7 +199,10 @@ private fun CameraMode.zoomUseCase(): ZoomUseCase = when (this) {
 }
 
 @Composable
-fun CameraScreen() {
+fun CameraScreen(
+    shortcut: ModeShortcut.Selection? = null,
+    onShortcutConsumed: () -> Unit = {},
+) {
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
     val session = remember { CameraSession(context, lifecycleOwner) }
@@ -249,6 +257,8 @@ fun CameraScreen() {
     var inFlight by remember { mutableIntStateOf(0) }
     var shutterPulse by remember { mutableIntStateOf(0) }
     var processingCapture by remember { mutableStateOf(false) }
+    var burstShots by remember { mutableIntStateOf(0) }
+    var burstActive by remember { mutableStateOf(false) }
     var status by remember { mutableStateOf<String?>(null) }
     var lastMediaUri by remember { mutableStateOf<Uri?>(null) }
     var dismissedQrValue by remember { mutableStateOf<String?>(null) }
@@ -1040,6 +1050,97 @@ fun CameraScreen() {
         }
     }
 
+    /** Applies a mode change to the session; shared by the carousel and shortcut launches. */
+    fun switchMode(selected: CameraMode) {
+        if (recording || specialStarting || processingCapture || panoramaStreaming) {
+            status = "Stop recording before switching modes"
+        } else if (selected == CameraMode.MACRO && !capabilities.macroFocusSupported) {
+            status = "This camera does not expose macro autofocus"
+        } else if (selected != mode) {
+            val previous = mode
+            mode = selected
+            if (!previous.usesCamera2Recorder && !selected.usesCamera2Recorder) {
+                if (extensionModeFor(selected, photoHdrEnabled) != ExtensionMode.NONE) {
+                    rawEnabled = false
+                    isoGauge = 0f
+                    speedGauge = 0f
+                    focusGauge = 0f
+                }
+                selected.session?.let { sessionMode ->
+                    session.setProfile(
+                        newMode = sessionMode,
+                        extensionMode = extensionModeFor(selected, photoHdrEnabled),
+                        macroMode = selected == CameraMode.MACRO,
+                        onError = { error ->
+                            status = error.message ?: "Could not switch mode"
+                        },
+                    )
+                }
+                if (selected == CameraMode.VIDEO) rawEnabled = false
+            }
+            if (selected != CameraMode.VIDEO) torchEnabled = false
+        }
+    }
+
+    // Launcher shortcuts and external launches: apply the requested mode and
+    // facing once, then clear the request in the activity.
+    LaunchedEffect(shortcut) {
+        val selection = shortcut ?: return@LaunchedEffect
+        switchMode(selection.mode)
+        selection.facing?.let { facing ->
+            session.setLensFacing(facing == ModeShortcut.Facing.FRONT) { error ->
+                status = error.message ?: "Could not switch camera"
+            }
+        }
+        onShortcutConsumed()
+    }
+
+    // Continuous shot: holding the shutter keeps queueing stills until the
+    // burst cap or release (clean-room hold-shutter behavior; see
+    // ContinuousShotPlan). The self-timer and the special pipelines keep
+    // their own semantics and refuse the burst with a status note.
+    fun burstEligible(): Boolean =
+        (mode == CameraMode.PHOTO || mode == CameraMode.EXPERT) &&
+            !selfTimer.enabled && !processingCapture
+
+    fun burstSummary(shots: Int): String =
+        "Burst: $shots ${if (shots == 1) "shot" else "shots"}"
+
+    fun startBurst() {
+        if (!burstEligible()) {
+            status = if (selfTimer.enabled) {
+                "Continuous shot is off with the self-timer"
+            } else {
+                "Continuous shot works in PHOTO and EXPERT"
+            }
+            return
+        }
+        if (burstActive) return
+        burstActive = true
+        burstShots = 0
+        shutterPulse++
+        coroutineScope.launch {
+            while (isActive && ContinuousShotPlan.shouldContinue(burstActive, burstShots)) {
+                if (!burstEligible()) break
+                if (ContinuousShotPlan.canTrigger(inFlight, MAX_IN_FLIGHT)) {
+                    inFlight++
+                    burstShots++
+                    shutterPulse++
+                    status = "BURST $burstShots/${ContinuousShotPlan.MAX_SHOTS}"
+                    captureNow()
+                }
+                delay(ContinuousShotPlan.TRIGGER_INTERVAL_MS)
+            }
+            if (burstShots > 0) status = burstSummary(burstShots)
+            burstActive = false
+        }
+    }
+
+    fun stopBurst() {
+        if (burstActive && burstShots > 0) status = burstSummary(burstShots)
+        burstActive = false
+    }
+
     LaunchedEffect(volumeKeyShutter) {
         if (volumeKeyShutter) {
             CameraKeyEvents.volumeShutter.collect {
@@ -1824,36 +1925,7 @@ fun CameraScreen() {
             ModeSelector(
                 selected = mode,
                 macroSupported = capabilities.macroFocusSupported,
-                onSelect = { selected ->
-                    if (recording || specialStarting || processingCapture || panoramaStreaming) {
-                        status = "Stop recording before switching modes"
-                    } else if (selected == CameraMode.MACRO && !capabilities.macroFocusSupported) {
-                        status = "This camera does not expose macro autofocus"
-                    } else if (selected != mode) {
-                        val previous = mode
-                        mode = selected
-                        if (!previous.usesCamera2Recorder && !selected.usesCamera2Recorder) {
-                            if (extensionModeFor(selected, photoHdrEnabled) != ExtensionMode.NONE) {
-                                rawEnabled = false
-                                isoGauge = 0f
-                                speedGauge = 0f
-                                focusGauge = 0f
-                            }
-                            selected.session?.let { sessionMode ->
-                                session.setProfile(
-                                    newMode = sessionMode,
-                                    extensionMode = extensionModeFor(selected, photoHdrEnabled),
-                                    macroMode = selected == CameraMode.MACRO,
-                                    onError = { error ->
-                                        status = error.message ?: "Could not switch mode"
-                                    },
-                                )
-                            }
-                            if (selected == CameraMode.VIDEO) rawEnabled = false
-                        }
-                        if (selected != CameraMode.VIDEO) torchEnabled = false
-                    }
-                },
+                onSelect = { selected -> switchMode(selected) },
             )
             Spacer(Modifier.height(22.dp))
             Row(
@@ -1931,6 +2003,8 @@ fun CameraScreen() {
                         enabled = (inFlight < MAX_IN_FLIGHT || panoramaStreaming) && !processingCapture,
                         pulse = shutterPulse,
                         onClick = { pressStillShutter() },
+                        onBurstStart = { startBurst() },
+                        onBurstStop = { stopBurst() },
                     )
                 }
                 IconCircle(
@@ -2387,14 +2461,39 @@ private fun ShutterButton(
     enabled: Boolean,
     pulse: Int,
     onClick: () -> Unit,
+    onBurstStart: () -> Unit,
+    onBurstStop: () -> Unit,
 ) {
     val color = if (enabled) White else FaintWhite
     val scale = if (pulse % 2 == 0) 1f else 0.92f
+    val currentEnabled by rememberUpdatedState(enabled)
+    val currentOnClick by rememberUpdatedState(onClick)
+    val currentBurstStart by rememberUpdatedState(onBurstStart)
+    val currentBurstStop by rememberUpdatedState(onBurstStop)
     Box(
         modifier = Modifier
             .size(78.dp)
             .graphicsLayer { scaleX = scale; scaleY = scale }
-            .clickable(enabled = enabled, onClick = onClick),
+            .pointerInput(Unit) {
+                // Tap captures; holding past the long-press timeout runs the
+                // continuous shot until the finger lifts. Detection stays
+                // live for the whole gesture (the button's enabled state can
+                // change mid-burst without cancelling the release).
+                detectTapGestures(
+                    onTap = { if (currentEnabled) currentOnClick() },
+                    onLongPress = { currentBurstStart() },
+                    onPress = {
+                        tryAwaitRelease()
+                        currentBurstStop()
+                    },
+                )
+            }
+            .semantics {
+                semanticsOnClick(label = "Shutter") {
+                    if (currentEnabled) currentOnClick()
+                    true
+                }
+            },
         contentAlignment = Alignment.Center,
     ) {
         Canvas(modifier = Modifier.fillMaxSize()) {

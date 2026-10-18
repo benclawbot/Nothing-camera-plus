@@ -1,0 +1,93 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Static launcher shortcuts: long-pressing the app icon opens a mode directly.
+  The system keeps up to getMaxShortcutCountPerActivity() entries and launchers
+  commonly show four, so the highest-priority modes come first (this mirrors
+  the original camera's shortcut order). Every mode can also be targeted by
+  other apps through app.cameraplus.action.SHORTCUT_CAMERA with the same
+  extras; see ModeShortcut.kt for the contract.
+-->
+<shortcuts xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <shortcut
+        android:shortcutId="photo"
+        android:enabled="true"
+        android:icon="@mipmap/ic_launcher"
+        android:shortcutShortLabel="@string/shortcut_photo">
+        <intent
+            android:action="app.cameraplus.action.SHORTCUT_CAMERA"
+            android:targetPackage="app.cameraplus"
+            android:targetClass="app.cameraplus.MainActivity">
+            <extra
+                android:name="app.cameraplus.extra.SHORTCUT_MODE"
+                android:value="PHOTO" />
+            <extra
+                android:name="app.cameraplus.extra.SHORTCUT_FACING"
+                android:value="back" />
+        </intent>
+    </shortcut>
+
+    <shortcut
+        android:shortcutId="selfie"
+        android:enabled="true"
+        android:icon="@mipmap/ic_launcher"
+        android:shortcutShortLabel="@string/shortcut_selfie">
+        <intent
+            android:action="app.cameraplus.action.SHORTCUT_CAMERA"
+            android:targetPackage="app.cameraplus"
+            android:targetClass="app.cameraplus.MainActivity">
+            <extra
+                android:name="app.cameraplus.extra.SHORTCUT_MODE"
+                android:value="PHOTO" />
+            <extra
+                android:name="app.cameraplus.extra.SHORTCUT_FACING"
+                android:value="front" />
+        </intent>
+    </shortcut>
+
+    <shortcut
+        android:shortcutId="video"
+        android:enabled="true"
+        android:icon="@mipmap/ic_launcher"
+        android:shortcutShortLabel="@string/shortcut_video">
+        <intent
+            android:action="app.cameraplus.action.SHORTCUT_CAMERA"
+            android:targetPackage="app.cameraplus"
+            android:targetClass="app.cameraplus.MainActivity">
+            <extra
+                android:name="app.cameraplus.extra.SHORTCUT_MODE"
+                android:value="VIDEO" />
+        </intent>
+    </shortcut>
+
+    <shortcut
+        android:shortcutId="portrait"
+        android:enabled="true"
+        android:icon="@mipmap/ic_launcher"
+        android:shortcutShortLabel="@string/shortcut_portrait">
+        <intent
+            android:action="app.cameraplus.action.SHORTCUT_CAMERA"
+            android:targetPackage="app.cameraplus"
+            android:targetClass="app.cameraplus.MainActivity">
+            <extra
+                android:name="app.cameraplus.extra.SHORTCUT_MODE"
+                android:value="PORTRAIT" />
+        </intent>
+    </shortcut>
+
+    <shortcut
+        android:shortcutId="time_lapse"
+        android:enabled="true"
+        android:icon="@mipmap/ic_launcher"
+        android:shortcutShortLabel="@string/shortcut_time_lapse">
+        <intent
+            android:action="app.cameraplus.action.SHORTCUT_CAMERA"
+            android:targetPackage="app.cameraplus"
+            android:targetClass="app.cameraplus.MainActivity">
+            <extra
+                android:name="app.cameraplus.extra.SHORTCUT_MODE"
+                android:value="TIME_LAPSE" />
+        </intent>
+    </shortcut>
+
+</shortcuts>

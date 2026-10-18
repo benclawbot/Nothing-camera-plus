@@ -377,6 +377,12 @@ class CameraSession(
         rebind(onError)
     }
 
+    /** Selects a specific facing directly (shortcut launches); no-op when it is already bound. */
+    fun setLensFacing(front: Boolean, onError: (Exception) -> Unit = {}) {
+        val target = if (front) CameraSelector.LENS_FACING_FRONT else CameraSelector.LENS_FACING_BACK
+        if (lensFacing != target) flipLens(onError)
+    }
+
     fun setFlashChoice(choice: FlashChoice, onError: (Exception) -> Unit = {}) {
         if (choice == FlashChoice.SCREEN && screenFlash == null) {
             onError(IllegalStateException("Screen flash is unavailable in this window"))

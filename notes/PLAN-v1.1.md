@@ -74,6 +74,12 @@
       EXIF orientation (3072×1728, tag 8); no errors in the capture path.
 - [x] Delete the two 0-byte MediaStore leftovers from the pre-fix capture path
       (`CameraPlus_1792175441365.jpg`, `CameraPlus_1792176319016.jpg`).
+- [ ] On the target phone, hold-shutter continuous shot: start on hold, running
+      counter, the 10-shot cap, stop on release, and the refusal notes with the
+      self-timer and outside PHOTO/EXPERT.
+- [ ] On the target phone, launcher shortcuts: each of the five entries opens its
+      mode/facing, and a shortcut tapped while the app is open (singleTop) applies
+      without a stale activity or a duplicate.
 
 ## Status log
 
@@ -179,3 +185,17 @@
   CameraX now binds after the first layout so the surface starts valid. Device re-test
   pending: landscape/upside-down poses, preview-to-file framing correlation, and the
   physical panorama sweep. 213 JVM tests pass; APK compiles.
+- 2026-10-18: launcher shortcuts. Static shortcuts (`res/xml/shortcuts.xml`) for the
+  five highest-priority modes — Photo (back), Selfie (front), Video, Portrait, Time
+  lapse — with MainActivity as a singleTop target; the `ModeShortcut` contract
+  (`app.cameraplus.action.SHORTCUT_CAMERA`, extras `SHORTCUT_MODE` / `SHORTCUT_FACING`)
+  reaches every mode for shortcut builders and automation and is unit-tested.
+  Shortcut art reuses the app icon; the system caps displayed shortcuts per launcher
+  (`getMaxShortcutCountPerActivity`). Device verification pending.
+- 2026-10-18: hold-shutter continuous shot. Holding the shutter queues stills at
+  queue capacity until release, capped at 10 frames (the original's burst count
+  limit; its hold-shutter preference maps to continuous shot via
+  `SettingKeys.KEY_HOLD_SHUTTER_KEY`). PHOTO/EXPERT only; the self-timer and special
+  pipelines refuse with a status note. The UI shows a running "BURST n/10" counter
+  and a final count; `ContinuousShotPlan` is the pure, unit-tested policy. 223 JVM
+  tests pass (10 new); APK compiles. Device verification still pending.

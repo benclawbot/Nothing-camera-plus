@@ -21,7 +21,9 @@ Status legend:
 
 Closed since the last pass: touch shutter, screen flash, per-mode zoom caps
 (night 30x, portrait/macro 4x, slo-mo 2x, time-lapse 10x, panorama 1x), B&W
-look, and the new subject tracking.
+look, and the new subject tracking. Closed 2026-10-18: launcher shortcuts
+(static core set plus a shortcut intent that reaches every mode) and the
+hold-shutter continuous shot (10-frame cap, PHOTO/EXPERT only).
 
 Genuine remaining gaps (clean-room implementable):
 
@@ -31,8 +33,6 @@ Genuine remaining gaps (clean-room implementable):
 | Restore defaults | small | no global settings screen yet |
 | Default-gallery picker / user save position | small | gallery hand-off resolves packages dynamically today |
 | Focal-length labels (14/24/35mm…) | small | zoom chips show ratios only |
-| Launcher mode shortcuts | small | needs `res/xml/shortcuts.xml` + intent handling |
-| Long-press shutter (continuous shot / video from photo) | small | shutter has no long-press action yet |
 | Watermark camera-parameters line | small | date/time/location/author already ship |
 | In-app video playback | medium | videos hand off to the system player |
 | Video encoder picker (H.264 / H.265) | medium | CameraX Recorder picks the codec; Camera2 recorder path needed |
@@ -81,7 +81,7 @@ ArcSoft/morpho panorama, smile shutter (vendor face ML).
 | Self-timer 3s / 10s | ✅ | |
 | Grid / mesh | ✅ | |
 | Leveler | ✅ | |
-| Burst / continuous capture | 🟡 | up to four queued captures; no long-press repeat gesture |
+| Burst / continuous capture | ✅ | Tap captures queue up to four in flight; hold-shutter runs the 10-frame continuous shot (PHOTO/EXPERT; self-timer and special modes refuse with a status note); device unverified |
 | Google Lens | 🚫 | requires the external Google app/service |
 | Stickers | ⬜ | no clean-room sticker pack/editor |
 | Face detection overlay | ⬜ | no face detector integrated |
@@ -217,7 +217,7 @@ unit-tested math component does not count as hardware feature parity.
 | Beauty video mode | 🚫 | `ProductConfig.isSupportBeautyVideo`; no video face-retouch pipeline |
 | Bokeh mode distinct from Portrait | 🟡 | clean-room simulated portrait blur only |
 | Panorama-night / PanoHDR mode | ⬜ | `ModeIndex.PANORAMA_NIGHT_ID`, proprietary HDR path |
-| Launcher shortcuts for Photo front/back, Video, Portrait, Time lapse, Panorama, Manual, Slo-mo, Macro, Night | ⬜ | `CameraMode`, `CameraConfig.CAMERA_SUBMODE_*` |
+| Launcher shortcuts for Photo front/back, Video, Portrait, Time lapse, Panorama, Manual, Slo-mo, Macro, Night | 🟡 | Static shortcuts for the five highest ranks (Photo both facings, Video, Portrait, Time lapse); `app.cameraplus.action.SHORTCUT_CAMERA` reaches every mode via `ModeShortcut`; launchers show up to `getMaxShortcutCountPerActivity()`. Shortcut art reuses the app icon; device unverified |
 | Mode-switch confirmation/accessibility hints | ⬜ | `confirm_mode_tip`, `accessibility_switch_mode` |
 
 ### Photo capture and still options
@@ -238,8 +238,8 @@ unit-tested math component does not count as hardware feature parity.
 | Self timer Off / 3s / 10s | ✅ | |
 | Grid / mesh-line options | 🟡 | guide cycle exists; not all original mesh variants |
 | Leveler / gradienter | ✅ | gravity-driven horizon line |
-| Burst / continuous capture count | 🟡 | up to four queued captures; original continuous/burst semantics differ |
-| Long-press shutter burst behavior | ⬜ | no long-press continuous-burst gesture |
+| Burst / continuous capture count | ✅ | Tap captures queue up to four in flight; hold-shutter runs the 10-frame continuous shot (the original's storage burst limit); device unverified |
+| Long-press shutter burst behavior | ✅ | Hold-shutter runs continuous shot up to 10 frames (the original's burst count limit; `SettingKeys.KEY_HOLD_SHUTTER_KEY` = `CONTINUOUS_SHOT`). The drag-to-quick-record gesture is not reproduced; device unverified |
 | Google Lens entry point | ⬜ | `GoogleFilter` |
 | Sticker picker / sticker capture | ⬜ | original sticker assets intentionally absent |
 | Face detection overlay / capture behavior | ⬜ | `FaceDetectionManager` |

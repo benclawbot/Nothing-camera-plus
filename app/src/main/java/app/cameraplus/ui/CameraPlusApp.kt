@@ -38,7 +38,10 @@ import app.cameraplus.ui.theme.White
  * Asks once automatically; afterwards the user can retry from this screen.
  */
 @Composable
-fun CameraPlusApp() {
+fun CameraPlusApp(
+    shortcut: ModeShortcut.Selection? = null,
+    onShortcutConsumed: () -> Unit = {},
+) {
     val context = LocalContext.current
     var granted by remember {
         mutableStateOf(
@@ -59,7 +62,7 @@ fun CameraPlusApp() {
     }
 
     if (granted) {
-        CameraScreen()
+        CameraScreen(shortcut = shortcut, onShortcutConsumed = onShortcutConsumed)
     } else {
         PermissionScreen(onGrant = { requestPermission.launch(Manifest.permission.CAMERA) })
     }

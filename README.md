@@ -17,6 +17,8 @@ Current release: **v1.2.0** (`versionCode 5`), debug-signed, `minSdk 33` (Androi
 | Modes: Photo, Video, Portrait, Beauty, Night, Panorama, Macro, QR, Slow motion, Time lapse, Expert | Implemented; live panorama / Camera2 recorder changes await device verification |
 | Expert manual controls (ISO / shutter / focus / EV / WB) | Done, device-verified |
 | Subject tracking (photo + video) | Done, device-verified (added in v1.2.0) |
+| Launcher shortcuts | Implemented; device verification pending |
+| Continuous shot (hold shutter) | Implemented; device verification pending |
 | Gallery hand-off and in-app gallery | Done, device-verified |
 | 213 JVM unit tests | Green |
 
@@ -54,6 +56,7 @@ The carousel ships eleven entries: **PHOTO, PORTRAIT, BEAUTY, NIGHT, PANORAMA, M
 - Self-timer off / 3 s / 10 s with a live countdown that can be cancelled.
 - Composition guides (rule of thirds, center, diagonal) and a gravity-driven level line.
 - Capture queueing: the shutter never locks while previous frames are written (up to four in flight).
+- Continuous shot: hold the shutter to queue a burst of up to 10 stills; releasing stops it. PHOTO and EXPERT only — the self-timer and the special pipelines are refused with a status note.
 - **Touch shutter** (tap the preview to capture) and **volume-key shutter**, both opt-in toggles; shutter-sound toggle.
 - Front-camera mirror capture preference, and opt-in geotagging written to MediaStore/EXIF.
 - Watermark stamp: on/off with date, time, location and author lines.
@@ -151,6 +154,7 @@ A clean-room tracking autofocus for both photo modes and video:
 - Dark, monochrome design: black window, white hairline controls, monospace labels, round shutter/record buttons, dot indicator under the active mode.
 - Edge-to-edge fullscreen with status-bar/display-cutout insets respected — the top control row never mixes with the system status bar.
 - All visuals are original; only system fonts and standard Material icons are used.
+- Launcher shortcuts for Photo, Selfie, Video, Portrait and Time lapse (the launcher's per-icon shortcut cap applies), plus a shortcut intent contract for other apps — `app.cameraplus.action.SHORTCUT_CAMERA` with mode and facing extras — that reaches every mode.
 
 ## Honest validation notes
 
@@ -167,7 +171,7 @@ Requirements:
 
 ```bash
 ./gradlew :app:assembleDebug       # debug APK
-./gradlew :app:testDebugUnitTest   # JVM unit tests (213)
+./gradlew :app:testDebugUnitTest   # JVM unit tests (223)
 ```
 
 `local.properties` (git-ignored) points at your SDK:
@@ -195,7 +199,7 @@ Runtime requirement: Android 13 or newer (`minSdk 33` — the preview-parity GL 
   - `ui/CameraScreen.kt`, `ui/GalleryScreen.kt`, `ui/FocusControls.kt`, `ui/CompositionOverlay.kt`, `ui/ProcessingSheet.kt`, `ui/CameraPlusApp.kt`, `ui/theme/Theme.kt` — Compose UI
   - `processing/` — software still pipeline (`ImageProcessor` pure math, `JpegProcessor` glue, `WatermarkRenderer`)
   - `settings/` — capture/processing/watermark preference models and stores
-- `app/src/test/` — JVM unit tests (213)
+- `app/src/test/` — JVM unit tests (223)
 - `dist/` — built APKs
 
 ## License
