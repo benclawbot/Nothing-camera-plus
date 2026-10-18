@@ -23,8 +23,9 @@ import android.net.Uri
  *
  * The system chooser is never used: a chooser is exactly the "something
  * intermediate" this helper exists to avoid. Every step resolves to one
- * concrete activity, and this returns `false` when nothing fit, so callers
- * can keep their own viewer as the last resort.
+ * concrete external activity. It returns `false` if the device has no
+ * gallery/viewer; callers should show an explanatory message rather than
+ * opening an internal gallery.
  *
  * Apps are picked because the system says they are galleries / review
  * viewers, never by hardcoding vendor package names.

@@ -108,6 +108,11 @@ object PresetCodec {
         "stripMetadata" to c.stripMetadata.toString(),
         "exifAuthor" to c.exifAuthor,
         "exifCopyright" to c.exifCopyright,
+        "pinnedSettings" to c.pinnedSettings
+            .filter { it != PinnedSetting.NONE }
+            .distinct()
+            .take(4)
+            .joinToString(",") { it.name },
     )
 
     private fun captureFrom(fields: Map<String, String>): CapturePreferences {
@@ -157,6 +162,13 @@ object PresetCodec {
             stripMetadata = fields.boolOr("stripMetadata", defaults.stripMetadata),
             exifAuthor = fields["exifAuthor"].orEmpty().take(64),
             exifCopyright = fields["exifCopyright"].orEmpty().take(64),
+            pinnedSettings = fields["pinnedSettings"]
+                ?.split(',')
+                ?.mapNotNull { name -> PinnedSetting.entries.firstOrNull { it.name == name } }
+                ?.filter { it != PinnedSetting.NONE }
+                ?.distinct()
+                ?.take(4)
+                ?: emptyList(),
         )
     }
 

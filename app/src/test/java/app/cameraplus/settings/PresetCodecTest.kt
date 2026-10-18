@@ -39,6 +39,7 @@ class PresetCodecTest {
             mergeExposureBracket = false,
             focusBracket = FocusBracket.FIVE_SHOT,
             focusAssistEnabled = true,
+            pinnedSettings = listOf(PinnedSetting.SIZE, PinnedSetting.FLASH, PinnedSetting.LOOK),
             ghostImage = true,
             defaultFocalMm = 35,
             voiceCountdown = true,

@@ -67,8 +67,8 @@ data class CapturePreferences(
     val stripMetadata: Boolean = false,
     val exifAuthor: String = "",
     val exifCopyright: String = "",
-    /** Which setting the viewfinder top bar shows a one-tap chip for. */
-    val pinnedSetting: PinnedSetting = PinnedSetting.NONE,
+    /** Up to four one-tap controls shown beside the viewfinder. */
+    val pinnedSettings: List<PinnedSetting> = emptyList(),
 )
 
 class CapturePreferencesStore(context: Context) {
@@ -122,10 +122,7 @@ class CapturePreferencesStore(context: Context) {
         stripMetadata = prefs.getBoolean(KEY_STRIP_METADATA, false),
         exifAuthor = prefs.getString(KEY_EXIF_AUTHOR, "").orEmpty().take(64),
         exifCopyright = prefs.getString(KEY_EXIF_COPYRIGHT, "").orEmpty().take(64),
-        pinnedSetting = enumValue(
-            prefs.getString(KEY_PINNED_SETTING, null),
-            PinnedSetting.NONE,
-        ),
+        pinnedSettings = loadPinnedSettings(),
     )
 
     /** Persists only the tracking toggle; the rest of the sheet is untouched. */
@@ -197,12 +194,35 @@ class CapturePreferencesStore(context: Context) {
             .putBoolean(KEY_STRIP_METADATA, options.stripMetadata)
             .putString(KEY_EXIF_AUTHOR, options.exifAuthor.take(64))
             .putString(KEY_EXIF_COPYRIGHT, options.exifCopyright.take(64))
-            .putString(KEY_PINNED_SETTING, options.pinnedSetting.name)
+            .putString(
+                KEY_PINNED_SETTINGS,
+                options.pinnedSettings
+                    .filter { it != PinnedSetting.NONE }
+                    .distinct()
+                    .take(MAX_PINNED_SETTINGS)
+                    .joinToString(PINNED_SEPARATOR) { it.name },
+            )
+            // Keep the first pin for downgrade compatibility with older builds.
+            .putString(
+                KEY_PINNED_SETTING,
+                options.pinnedSettings.firstOrNull { it != PinnedSetting.NONE }?.name
+                    ?: PinnedSetting.NONE.name,
+            )
             .apply()
     }
 
     private inline fun <reified T : Enum<T>> enumValue(value: String?, fallback: T): T =
         value?.let { name -> enumValues<T>().firstOrNull { it.name == name } } ?: fallback
+
+    private fun loadPinnedSettings(): List<PinnedSetting> {
+        val saved = prefs.getString(KEY_PINNED_SETTINGS, null)
+        val names = saved?.split(PINNED_SEPARATOR)
+            ?: listOfNotNull(prefs.getString(KEY_PINNED_SETTING, null))
+        return names.mapNotNull { name -> PinnedSetting.entries.firstOrNull { it.name == name } }
+            .filter { it != PinnedSetting.NONE }
+            .distinct()
+            .take(MAX_PINNED_SETTINGS)
+    }
 
     private companion object {
         const val KEY_FLASH = "flash"
@@ -245,6 +265,9 @@ class CapturePreferencesStore(context: Context) {
         const val KEY_EXIF_AUTHOR = "exif_author"
         const val KEY_EXIF_COPYRIGHT = "exif_copyright"
         const val KEY_PINNED_SETTING = "pinned_setting"
+        const val KEY_PINNED_SETTINGS = "pinned_settings"
+        const val PINNED_SEPARATOR = "|"
+        const val MAX_PINNED_SETTINGS = 4
         val TIME_LAPSE_SPEEDS = setOf(15, 30, 60, 120, 240, 480, 960)
         val SLOW_MOTION_RATES = setOf(120, 240, 480)
 

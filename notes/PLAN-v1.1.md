@@ -6,7 +6,7 @@
       throws for `OUTPUT_FORMAT_RAW_JPEG`.
 - [x] Zoom requests are clamped to the selected camera's reported range.
 - [x] Default lens selection uses the focal/sensor plan, not HAL enumeration order.
-- [x] Gallery button opens an in-app grid, photo viewer and share flow.
+- [x] Lower-left camera thumbnail opens the installed external gallery directly on the latest capture; no in-app viewer fallback.
 - [x] Pinch zoom and focal-derived lens stop controls are wired.
 - [x] Processing preflights oversized frames, streams encode and saves the original frame if
       optional software processing fails.
@@ -25,7 +25,7 @@
       substitute remains translation-only, three-band and downsampled.
 - [x] Portrait — CameraX BOKEH extension if available; otherwise centre-weighted simulated blur.
 - [x] Night — CameraX NIGHT extension if available; otherwise four-frame bounded software merge.
-- [x] Gallery grid, photo viewer and share; video playback opens the system player.
+- [x] System-gallery hand-off for photos/videos; lower-left latest-capture thumbnail is shown in the viewfinder.
 - [x] Tap-to-meter, long-duration focus/meter lock and viewfinder EV slider.
 - [x] Self-timer 3s/10s and video quality-tier picker (HD/1080p/4K).
 - [x] Requested 30/60fps video targets, gated by CameraInfo's supported frame-rate ranges.
@@ -378,3 +378,16 @@
   cues inspired the guidance; no parallax/rotation solver or OEM parity is
   claimed. 311 JVM tests pass (2 new); APK build and device verification remain
   separate checks.
+- 2026-10-19: overall camera UX follow-through. Capture preference changes and
+  preset recalls now batch CameraX rebinds; preset recall also applies the
+  live tracking/WB/focus-assist/blur state. Timer series now account for their
+  in-flight reservation correctly and cancel if the timer is disabled or the
+  user changes modes. Permission denial routes permanently denied users to
+  App Settings on the next action. Settings choices/toggles and mode tabs now
+  expose selected/toggle roles and larger touch targets; unavailable Macro is
+  visibly disabled. Quick access expands from one pin to up to four saved,
+  preset-aware controls, reset defaults asks for confirmation. The internal
+  gallery UI is removed: a lower-left circular latest photo/video thumbnail
+  launches the installed external gallery directly on its MediaStore URI, with
+  an explicit no-gallery message instead of an in-app fallback. JVM suite
+  remains at 311; APK compiles. Device verification pending for camera/galleries.

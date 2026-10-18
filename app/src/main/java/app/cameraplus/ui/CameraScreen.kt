@@ -39,6 +39,7 @@ import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.only
@@ -52,6 +53,7 @@ import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.selection.selectable
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Cameraswitch
 import androidx.compose.material.icons.outlined.FilterCenterFocus
@@ -60,6 +62,7 @@ import androidx.compose.material.icons.outlined.FlashOff
 import androidx.compose.material.icons.outlined.FlashOn
 import androidx.compose.material.icons.outlined.GridOn
 import androidx.compose.material.icons.outlined.PhotoLibrary
+import androidx.compose.material.icons.outlined.PlayCircle
 import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -93,6 +96,9 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.semantics.onClick as semanticsOnClick
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.role
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
@@ -254,7 +260,6 @@ fun CameraScreen(
     var preferredGallery by remember { mutableStateOf(galleryStore.load()) }
     val galleryApps = remember(context) { SystemGallery.installedGalleries(context) }
     var showProcessing by remember { mutableStateOf(false) }
-    var showGallery by remember { mutableStateOf(false) }
     var guides by remember { mutableStateOf(CompositionGuides.NONE) }
     val roll = rememberSensorRoll()
     var focusTarget by remember { mutableStateOf<Offset?>(null) }
@@ -337,6 +342,20 @@ fun CameraScreen(
         )
     }
     var lastMediaUri by remember { mutableStateOf<Uri?>(null) }
+    var galleryPreviewUri by remember { mutableStateOf<Uri?>(null) }
+    var galleryPreviewBitmap by remember { mutableStateOf<Bitmap?>(null) }
+    var galleryPreviewIsVideo by remember { mutableStateOf(false) }
+    LaunchedEffect(lastMediaUri) {
+        val uri = lastMediaUri ?: MediaLibrary.recent(context, limit = 1).firstOrNull()?.uri
+        galleryPreviewUri = uri
+        galleryPreviewBitmap = null
+        galleryPreviewIsVideo = uri?.let { context.contentResolver.getType(it)?.startsWith("video/") } == true
+        if (uri != null) {
+            galleryPreviewBitmap = withContext(Dispatchers.IO) {
+                runCatching { MediaLibrary.thumbnail(context, uri) }.getOrNull()
+            }
+        }
+    }
     var ghostEnabled by remember { mutableStateOf(capturePreferences.ghostImage) }
     var ghostBitmap by remember { mutableStateOf<ImageBitmap?>(null) }
 
@@ -575,6 +594,9 @@ fun CameraScreen(
 
     fun applyCapturePreferences(options: CapturePreferences) {
         val resolvedOptions = options.copy(
+            photoResolution = options.photoResolution.takeIf {
+                capabilities.maximumPhotoResolutionSupported
+            } ?: PhotoResolution.STANDARD,
             stillQuality = options.stillQuality.takeIf { it in capabilities.availableStillQuality }
                 ?: StillQuality.FAST,
             ultraHdrEnabled = options.ultraHdrEnabled && capabilities.ultraHdrPhotoSupported,
@@ -589,11 +611,7 @@ fun CameraScreen(
         capturePreferences = resolvedOptions
         flashChoice = resolvedOptions.flashChoice
         photoAspectRatio = resolvedOptions.photoAspectRatio
-        photoResolution = if (capabilities.maximumPhotoResolutionSupported) {
-            resolvedOptions.photoResolution
-        } else {
-            PhotoResolution.STANDARD
-        }
+        photoResolution = resolvedOptions.photoResolution
         videoQuality = resolvedOptions.videoQuality
         videoFrameRate = resolvedOptions.videoFrameRate
         selfTimer = resolvedOptions.selfTimer
@@ -604,27 +622,72 @@ fun CameraScreen(
         histogramArmed = resolvedOptions.histogramEnabled
         zebrasArmed = resolvedOptions.zebrasEnabled
         peakingArmed = resolvedOptions.peakingEnabled
+        trackingArmed = resolvedOptions.subjectTracking
         ghostEnabled = resolvedOptions.ghostImage
         photoHdrEnabled = resolvedOptions.photoHdrEnabled && capabilities.hdrExtensionAvailable
         timeLapseSpeed = resolvedOptions.timeLapseSpeed
         slowMotionFps = resolvedOptions.slowMotionFps
+        whiteBalance = resolvedOptions.whiteBalance
+        whiteBalanceKelvin = resolvedOptions.whiteBalanceKelvin
+        bokehLevel = resolvedOptions.portraitBlurLevel
         // Recompute the Ultra HDR/SDR binding before any other preference
         // below can trigger a rebind (notably MAX resolution and still quality).
-        session.setUltraHdrEnabled(
-            resolvedOptions.ultraHdrEnabled,
-            ultraHdrCompatible(resolvedOptions),
-        ) { error -> status = error.message }
-        session.setFlashChoice(flashChoice) { error -> status = error.message }
-        session.setPhotoAspectRatio(photoAspectRatio) { error -> status = error.message }
-        session.setPhotoResolution(photoResolution) { error -> status = error.message }
-        session.setStillQuality(resolvedOptions.stillQuality) { error -> status = error.message }
-        videoQuality = session.setVideoQuality(videoQuality) { error -> status = error.message }
-        videoFrameRate = session.setVideoFrameRate(videoFrameRate) { error -> status = error.message }
-        session.setMirrorCaptureEnabled(mirrorCapture)
-        session.setShutterSoundEnabled(shutterSoundEnabled)
-        // Turning KEEP EXPOSURE on adopts the value that was dialled in;
-        // turning it off hands the metering back to the camera's default.
-        evIndex = session.setExposureCompensationIndex(if (resolvedOptions.keepExposure) evIndex else 0)
+        session.updateSettingsAtomically(onError = { error ->
+            status = error.message ?: "Could not apply camera settings"
+        }) {
+            setUltraHdrEnabled(
+                resolvedOptions.ultraHdrEnabled,
+                ultraHdrCompatible(resolvedOptions),
+            ) { error -> status = error.message }
+            setFlashChoice(flashChoice) { error -> status = error.message }
+            setPhotoAspectRatio(photoAspectRatio) { error -> status = error.message }
+            setPhotoResolution(photoResolution) { error -> status = error.message }
+            setStillQuality(resolvedOptions.stillQuality) { error -> status = error.message }
+            videoQuality = setVideoQuality(videoQuality) { error -> status = error.message }
+            videoFrameRate = setVideoFrameRate(videoFrameRate) { error -> status = error.message }
+            setAntiBanding(resolvedOptions.antiBanding) { error -> status = error.message }
+            setBarcodeScanning(resolvedOptions.barcodeScanning) { error -> status = error.message }
+            setMetadataPrivacy(
+                resolvedOptions.stripMetadata,
+                resolvedOptions.exifAuthor,
+                resolvedOptions.exifCopyright,
+            )
+            if (!mode.usesCamera2Recorder) {
+                setSubjectTrackingEnabled(
+                    trackingArmed && mode.supportsSubjectTracking(),
+                ) { error -> status = error.message }
+                setViewfinderOverlays(
+                    histogram = histogramArmed && mode == CameraMode.EXPERT,
+                    zebras = zebrasArmed && mode == CameraMode.EXPERT,
+                    peaking = peakingArmed && mode == CameraMode.EXPERT,
+                ) { error -> status = error.message }
+                setExtensionMode(extensionModeFor(mode, photoHdrEnabled)) { error ->
+                    status = error.message ?: "Could not apply the hardware photo extension"
+                }
+                if (mode == CameraMode.EXPERT) {
+                    setManualControls(
+                        ManualControls(
+                            iso = capabilities.isoRange?.let { ManualControlPlan.isoFor(isoGauge, it) },
+                            exposureTimeNs = capabilities.exposureRange?.let {
+                                ManualControlPlan.exposureFor(speedGauge, it)
+                            },
+                            focusDiopters = capabilities.minFocusDistance?.let {
+                                ManualControlPlan.focusFor(focusGauge, it)
+                            },
+                            whiteBalance = whiteBalance,
+                            colorTemperatureKelvin = whiteBalanceKelvin.takeIf {
+                                whiteBalance == WhiteBalancePreset.CUSTOM
+                            },
+                        ),
+                    ) { error -> status = error.message }
+                }
+            }
+            setMirrorCaptureEnabled(mirrorCapture)
+            setShutterSoundEnabled(shutterSoundEnabled)
+            // Turning KEEP EXPOSURE on adopts the value that was dialled in;
+            // turning it off hands the metering back to the camera's default.
+            evIndex = setExposureCompensationIndex(if (resolvedOptions.keepExposure) evIndex else 0)
+        }
     }
 
     /**
@@ -645,6 +708,7 @@ fun CameraScreen(
         shutterSoundEnabled = shutterSoundEnabled,
         volumeKeyShutter = volumeKeyShutter,
         touchShutter = touchShutter,
+        subjectTracking = trackingArmed,
         histogramEnabled = histogramArmed,
         zebrasEnabled = zebrasArmed,
         peakingEnabled = peakingArmed,
@@ -907,7 +971,7 @@ fun CameraScreen(
         status = "Preset: ${preset.name}"
     }
 
-    /** The value the pinned top-bar chip shows for the setting it pins. */
+    /** The value a quick-access chip shows for its pinned setting. */
     fun pinnedValueLabel(pinned: PinnedSetting): String = when (pinned) {
         PinnedSetting.NONE -> ""
         PinnedSetting.ASPECT -> photoAspectRatio.label
@@ -922,8 +986,8 @@ fun CameraScreen(
      * about (a 50 MP capture, the look, the timer) is one tap away instead of a
      * trip through the settings sheet.
      */
-    fun cyclePinnedSetting() {
-        when (capturePreferences.pinnedSetting) {
+    fun cyclePinnedSetting(pinned: PinnedSetting) {
+        when (pinned) {
             PinnedSetting.NONE -> Unit
             PinnedSetting.ASPECT -> {
                 val next = photoAspectRatio.nextEntry()
@@ -1667,6 +1731,13 @@ fun CameraScreen(
         } else if (selected == CameraMode.MACRO && !capabilities.macroFocusSupported) {
             status = "This camera does not expose macro autofocus"
         } else if (selected != mode) {
+            if (timerDeadline != 0L && pendingShot) {
+                timerDeadline = 0L
+                timerLeft = 0
+                pendingShot = false
+                inFlight = (inFlight - 1).coerceAtLeast(0)
+                status = "Timer cancelled · mode changed"
+            }
             val previous = mode
             mode = selected
             // Set the format decision before the profile's bind, so a Photo ->
@@ -1849,7 +1920,9 @@ fun CameraScreen(
                 if (pendingShot) {
                     pendingShot = false
                     for (shot in 1..shots) {
-                        inFlight++
+                        // The reservation made when the countdown began is the
+                        // first shot's slot; only later series shots add slots.
+                        if (shot > 1) inFlight++
                         if (shots > 1) status = "TIMER $shot/$shots"
                         captureNow()
                         if (shot < shots) delay(TIMER_SERIES_INTERVAL_MILLIS)
@@ -2239,15 +2312,26 @@ fun CameraScreen(
                     )
                 }
             }
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                if (capturePreferences.pinnedSetting != PinnedSetting.NONE) {
-                    ToggleChip(
-                        label = "${capturePreferences.pinnedSetting.label} " +
-                            pinnedValueLabel(capturePreferences.pinnedSetting),
-                        active = true,
-                        enabled = !recording && !specialStarting,
-                        onClick = ::cyclePinnedSetting,
-                    )
+            Row(
+                modifier = Modifier.weight(1f),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.End,
+            ) {
+                if (capturePreferences.pinnedSettings.isNotEmpty()) {
+                    Row(
+                        modifier = Modifier.weight(1f).horizontalScroll(rememberScrollState()),
+                        horizontalArrangement = Arrangement.spacedBy(4.dp, Alignment.End),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        capturePreferences.pinnedSettings.take(4).forEach { pinned ->
+                            ToggleChip(
+                                label = "${pinned.label} ${pinnedValueLabel(pinned)}",
+                                active = true,
+                                enabled = !recording && !specialStarting,
+                                onClick = { cyclePinnedSetting(pinned) },
+                            )
+                        }
+                    }
                 }
                 if (mode == CameraMode.PHOTO) {
                     ToggleChip(
@@ -2261,6 +2345,8 @@ fun CameraScreen(
                                 timerDeadline = 0L
                                 timerLeft = 0
                                 pendingShot = false
+                                inFlight = (inFlight - 1).coerceAtLeast(0)
+                                status = "Timer cancelled"
                             }
                         },
                     )
@@ -2686,18 +2772,22 @@ fun CameraScreen(
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                IconCircle(
-                    imageVector = Icons.Outlined.PhotoLibrary,
-                    contentDescription = "Gallery",
+                GalleryPreviewCircle(
+                    bitmap = galleryPreviewBitmap,
+                    isVideo = galleryPreviewIsVideo,
+                    contentDescription = if (galleryPreviewUri == null) {
+                        "Open gallery"
+                    } else if (galleryPreviewIsVideo) {
+                        "Open most recent video in gallery"
+                    } else {
+                        "Open most recent photo in gallery"
+                    },
                     onClick = {
                         coroutineScope.launch {
-                            // Prefer what this session just saved; otherwise
-                            // the newest Camera+ item on disk.
-                            val target = lastMediaUri
+                            val target = galleryPreviewUri
                                 ?: MediaLibrary.recent(context, limit = 1).firstOrNull()?.uri
                             if (!SystemGallery.open(context, target, preferredPackage = preferredGallery)) {
-                                // No gallery app on this device; keep ours.
-                                showGallery = true
+                                status = "No gallery app found · install one or choose it in settings"
                             }
                         }
                     },
@@ -2715,6 +2805,7 @@ fun CameraScreen(
                                     val started = session.startRecording(
                                         recordAudio = micEnabled,
                                         onFinished = {
+                                            lastMediaUri = it
                                             recording = false
                                             status = "Video saved"
                                         },
@@ -2821,9 +2912,6 @@ fun CameraScreen(
             )
         }
 
-        if (showGallery) {
-            GalleryScreen(onDismiss = { showGallery = false })
-        }
     }
 }
 
@@ -3177,17 +3265,26 @@ private fun ModeSelector(
     ) {
         CameraMode.entries.forEach { mode ->
             val active = mode == selected
+            val available = mode != CameraMode.MACRO || macroSupported
             Column(
                 horizontalAlignment = Alignment.CenterHorizontally,
                 modifier = Modifier
-                    .clickable(enabled = mode != CameraMode.MACRO || macroSupported) {
-                        onSelect(mode)
-                    }
+                    .selectable(
+                        selected = active,
+                        enabled = available,
+                        role = Role.Tab,
+                        onClick = { onSelect(mode) },
+                    )
+                    .heightIn(min = 48.dp)
                     .padding(horizontal = 6.dp, vertical = 4.dp),
             ) {
                 Text(
                     text = mode.label,
-                    color = if (active) White else DimWhite,
+                    color = when {
+                        active -> White
+                        !available -> FaintWhite
+                        else -> DimWhite
+                    },
                     fontFamily = FontFamily.Monospace,
                     letterSpacing = 2.sp,
                     style = MaterialTheme.typography.labelMedium,
@@ -3283,6 +3380,8 @@ private fun ShutterButton(
                 )
             }
             .semantics {
+                contentDescription = if (capturing) "Capture in progress" else "Shutter"
+                role = Role.Button
                 semanticsOnClick(label = "Shutter") {
                     if (currentEnabled) currentOnClick()
                     true
@@ -3310,7 +3409,11 @@ private fun RecordButton(
     Box(
         modifier = Modifier
             .size(78.dp)
-            .clickable(enabled = enabled, onClick = onClick),
+            .clickable(enabled = enabled, onClick = onClick)
+            .semantics {
+                contentDescription = if (recording) "Stop recording" else "Start recording"
+                role = Role.Button
+            },
         contentAlignment = Alignment.Center,
     ) {
         Canvas(modifier = Modifier.fillMaxSize()) {
@@ -3353,6 +3456,51 @@ private fun IconCircle(
             tint = White,
             modifier = Modifier.size(22.dp),
         )
+    }
+}
+
+@Composable
+private fun GalleryPreviewCircle(
+    bitmap: Bitmap?,
+    isVideo: Boolean,
+    contentDescription: String,
+    onClick: () -> Unit,
+) {
+    Box(
+        modifier = Modifier
+            .size(50.dp)
+            .clip(CircleShape)
+            .background(Color(0x1AFFFFFF))
+            .clickable(onClick = onClick)
+            .semantics {
+                this.contentDescription = contentDescription
+                role = Role.Button
+            },
+        contentAlignment = Alignment.Center,
+    ) {
+        if (bitmap != null && !bitmap.isRecycled) {
+            Image(
+                bitmap = bitmap.asImageBitmap(),
+                contentDescription = null,
+                contentScale = ContentScale.Crop,
+                modifier = Modifier.fillMaxSize(),
+            )
+        } else {
+            Icon(
+                imageVector = Icons.Outlined.PhotoLibrary,
+                contentDescription = null,
+                tint = White,
+                modifier = Modifier.size(22.dp),
+            )
+        }
+        if (isVideo && bitmap != null) {
+            Icon(
+                imageVector = Icons.Outlined.PlayCircle,
+                contentDescription = null,
+                tint = White,
+                modifier = Modifier.size(24.dp),
+            )
+        }
     }
 }
 

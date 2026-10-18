@@ -26,7 +26,7 @@ look, and the new subject tracking. Closed 2026-10-18: launcher shortcuts
 hold-shutter continuous shot (10-frame cap, PHOTO/EXPERT only), focal-length
 zoom labels, the settings sheet's restore-defaults action, the watermark
 camera-parameters line, `DCIM/Camera` storage for photos and videos, a
-gallery-app picker in the camera settings, in-app video playback and the
+  gallery-app picker in the camera settings, external latest-capture review and the
 expert histogram, zebra stripes and focus peaking (one shared analysis
 stream), sticky exposure (KEEP EXPOSURE), anti-flicker 50/60 Hz anti-banding
 and the GrapheneOS-style focus timeout.
@@ -71,7 +71,7 @@ Nothing community's own camera feedback threads (`nothing.community`).
 | Metadata stripping (GPS and device identity) | GrapheneOS Secure Camera | Implemented; device verification pending |
 | EXIF author / copyright stamping | Open Camera | Implemented; device verification pending |
 | Named camera presets (save / apply / delete) | Nothing forum request ("save my settings as a preset") | Implemented; device verification pending |
-| Pin a setting to the top bar | Nothing forum request ("50MP quality should be on the top bar") | Implemented; device verification pending |
+| Up to four quick-access controls | Pixel Camera quick controls + Nothing forum request ("50MP quality should be on the top bar") | Implemented as a horizontally scrollable viewfinder row; preferences/presets persist; device layout pending |
 
 ---
 
@@ -202,7 +202,7 @@ Nothing community's own camera feedback threads (`nothing.community`).
 |---|---|---|
 | Processing sheet (tone/skin/sharp/…) | ✅ | Includes clean-room Natural/B&W/Warm/Cool/Vivid/Vintage looks |
 | Volume-key and touch shutter | ✅ | both toggles ship in the processing sheet and are applied to their gestures; smile shutter is not implemented |
-| In-app gallery (recent Camera+ media, photo viewer, share) | 🟡 | thumbnail opens the device's gallery app on the newest item (review hand-off); in-app grid/viewer remains as fallback with view/share/favorite/delete |
+| Latest-capture review | 🟡 | lower-left shutter circle previews latest Camera+ photo/video and opens the installed system gallery directly on that item; no in-app gallery fallback; device preview/intent behavior pending |
 | Tap-to-focus/meter | 🟡 | CameraX metering action; hardware behavior unverified |
 | Viewfinder exposure-compensation control | 🟡 | EV slider wired to CameraX; hardware behavior unverified |
 | Long-press focus/meter lock | 🟡 | long-duration metering action; hardware behavior unverified |
@@ -367,13 +367,10 @@ unit-tested math component does not count as hardware feature parity.
 | Watermark on/off and logo/time/date/location/author/camera-parameters options | ✅ | software text stamp; camera parameters read from the still's EXIF plus session lens data; original artwork/style not mirrored |
 | Glyph mirror preference | ⬜ | `glyph_mirror` |
 | QR-code scanning | ✅ | local ZXing QR analyzer with open/copy actions; not every barcode type |
-| In-app recent gallery and photo viewer | ✅ | gallery button hands off to the system gallery app (newest item, or the pinned app); in-app grid/viewer kept as the no-gallery-app fallback |
-| In-app video playback | ✅ | platform `VideoView` with media controls, looping playback, released when the viewer closes |
-| Gallery delete/favorite/info actions | 🟡 | delete/favorite/date/size implemented; crop/rotate/editor absent |
-| Motion-photo playback in gallery | 🚫 | motion photo capture absent |
+| System gallery review | 🟡 | lower-left latest-capture thumbnail opens the selected/default external gallery with the photo or video URI; no in-app viewer fallback |
 | Shutter sound toggle | ✅ | MediaActionSound toggle; hardware/region policy may override |
 | Volume-key still shutter | ✅ | explicit opt-in and only while enabled |
 | Touch / smile shutter | 🟡 | touch shutter ships as a ProcessingSheet toggle and captures on preview taps; smile shutter absent |
-| Save-position / default-gallery selection | ✅ | captures go to `DCIM/Camera` and the settings sheet can pin a gallery app (automatic by default, uninstalled pins fall back); no user-selectable save path/SD card |
+| Save-position / default-gallery selection | ✅ | captures go to `DCIM/Camera` and the settings sheet can pin an external gallery app (automatic by default, uninstalled pins fall back); no user-selectable save path/SD card |
 | Anti-flicker, exposure-metering, dehaze/distortion controls | 🟡 | 50/60 Hz anti-banding is implemented from the camera's own advertised modes (2026-10-18); exposure metering weighting, dehaze and distortion controls remain vendor-only |
 | Restore defaults | ✅ | Camera settings sheet: RESTORE DEFAULTS resets capture preferences, processing look and watermark (geotag switched off); device unverified |

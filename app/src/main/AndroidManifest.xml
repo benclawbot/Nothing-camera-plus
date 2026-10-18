@@ -13,8 +13,8 @@
     <!--
       The gallery button resolves the device's viewer/gallery apps at
       runtime. Without these declarations package visibility (Android 11+)
-      hides them and every lookup returns empty, so the hand-off would
-      silently fall back to the in-app grid every time.
+      hides them and every lookup returns empty, preventing direct hand-off
+      to the user's installed gallery app.
     -->
     <queries>
         <intent>

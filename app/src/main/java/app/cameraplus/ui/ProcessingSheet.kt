@@ -12,7 +12,11 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.selection.selectable
+import androidx.compose.foundation.selection.toggleable
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedTextField
@@ -20,6 +24,7 @@ import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.material3.Slider
 import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -27,6 +32,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -93,6 +99,7 @@ fun ProcessingSheet(
 ) {
     var section by remember { mutableStateOf(SettingsSection.PHOTO) }
     var presetName by remember { mutableStateOf("") }
+    var confirmRestoreDefaults by remember { mutableStateOf(false) }
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     ModalBottomSheet(
         sheetState = sheetState,
@@ -137,7 +144,14 @@ fun ProcessingSheet(
                         fontFamily = FontFamily.Monospace,
                         letterSpacing = 1.5.sp,
                         style = MaterialTheme.typography.labelSmall,
-                        modifier = Modifier.clickable { section = tab }.padding(vertical = 12.dp),
+                        modifier = Modifier
+                            .selectable(
+                                selected = section == tab,
+                                role = Role.Tab,
+                                onClick = { section = tab },
+                            )
+                            .heightIn(min = 48.dp)
+                            .padding(vertical = 12.dp),
                     )
                 }
             }
@@ -434,10 +448,27 @@ fun ProcessingSheet(
                             SystemGallery.galleryPackageForLabel(galleryApps, value),
                         )
                     }
-                    SettingsChoices("PIN TO TOP BAR", capturePreferences.pinnedSetting.label,
-                        PinnedSetting.entries.map { it.label }) { value ->
-                        PinnedSetting.entries.firstOrNull { it.label == value }?.let {
-                            onCapturePreferencesChange(capturePreferences.copy(pinnedSetting = it))
+                    Text(
+                        text = "QUICK ACCESS · ${capturePreferences.pinnedSettings.size.coerceAtMost(4)}/4",
+                        color = DimWhite,
+                        fontFamily = FontFamily.Monospace,
+                        letterSpacing = 2.sp,
+                        style = MaterialTheme.typography.labelSmall,
+                        modifier = Modifier.padding(top = 16.dp, bottom = 4.dp),
+                    )
+                    PinnedSetting.entries.filter { it != PinnedSetting.NONE }.forEach { setting ->
+                        val selected = setting in capturePreferences.pinnedSettings
+                        SettingsToggle(
+                            setting.label,
+                            active = selected,
+                            enabled = selected || capturePreferences.pinnedSettings.size < 4,
+                        ) {
+                            val updated = if (selected) {
+                                capturePreferences.pinnedSettings - setting
+                            } else {
+                                (capturePreferences.pinnedSettings + setting).take(4)
+                            }
+                            onCapturePreferencesChange(capturePreferences.copy(pinnedSettings = updated))
                         }
                     }
                     Column(modifier = Modifier.fillMaxWidth().padding(top = 16.dp)) {
@@ -526,13 +557,7 @@ fun ProcessingSheet(
                 letterSpacing = 1.5.sp,
                 style = MaterialTheme.typography.labelSmall,
                 modifier = Modifier
-                    .clickable {
-                        onCapturePreferencesChange(CapturePreferences())
-                        onSettingsChange(ProcessingSettings.NATURAL)
-                        onWatermarkChange(WatermarkOptions())
-                        onPreferredGalleryChange(null)
-                        if (geotagEnabled) onGeotagToggle()
-                    }
+                    .clickable { confirmRestoreDefaults = true }
                     .padding(vertical = 12.dp),
             )
             Text(
@@ -542,6 +567,28 @@ fun ProcessingSheet(
                 modifier = Modifier.padding(bottom = 4.dp),
             )
         }
+    }
+    if (confirmRestoreDefaults) {
+        AlertDialog(
+            onDismissRequest = { confirmRestoreDefaults = false },
+            title = { Text("Restore camera defaults?") },
+            text = { Text("This resets capture options, image processing, watermark and gallery choice.") },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        confirmRestoreDefaults = false
+                        onCapturePreferencesChange(CapturePreferences())
+                        onSettingsChange(ProcessingSettings.NATURAL)
+                        onWatermarkChange(WatermarkOptions())
+                        onPreferredGalleryChange(null)
+                        if (geotagEnabled) onGeotagToggle()
+                    },
+                ) { Text("RESTORE") }
+            },
+            dismissButton = {
+                TextButton(onClick = { confirmRestoreDefaults = false }) { Text("CANCEL") }
+            },
+        )
     }
 }
 
@@ -580,7 +627,12 @@ private fun SettingsChoices(
                     fontFamily = FontFamily.Monospace,
                     style = MaterialTheme.typography.labelSmall,
                     modifier = Modifier
-                        .clickable { onSelect(option) }
+                        .selectable(
+                            selected = option == selected,
+                            role = Role.RadioButton,
+                            onClick = { onSelect(option) },
+                        )
+                        .heightIn(min = 48.dp)
                         .padding(horizontal = 10.dp, vertical = 10.dp),
                 )
             }
@@ -598,20 +650,26 @@ private fun SettingsToggle(
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .clickable(enabled = enabled, onClick = onClick)
-            .padding(vertical = 10.dp),
+            .toggleable(
+                value = active,
+                enabled = enabled,
+                role = Role.Switch,
+                onValueChange = { onClick() },
+            )
+            .heightIn(min = 48.dp)
+            .padding(vertical = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Text(
             text = label,
-            color = White,
+            color = if (enabled) White else FaintWhite,
             fontFamily = FontFamily.Monospace,
             style = MaterialTheme.typography.labelSmall,
         )
         Spacer(Modifier.weight(1f))
         Text(
             text = if (active) "ON" else "OFF",
-            color = White,
+            color = if (enabled) White else FaintWhite,
             fontFamily = FontFamily.Monospace,
             style = MaterialTheme.typography.labelSmall,
         )
@@ -623,8 +681,9 @@ private fun WatermarkRow(label: String, active: Boolean, onClick: () -> Unit) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .clickable(onClick = onClick)
-            .padding(vertical = 9.dp),
+            .toggleable(value = active, role = Role.Switch, onValueChange = { onClick() })
+            .heightIn(min = 48.dp)
+            .padding(vertical = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Text(

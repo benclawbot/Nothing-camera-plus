@@ -31,7 +31,7 @@ Current release: **v1.2.0** (`versionCode 5`), debug-signed, `minSdk 33` (Androi
 | Metadata stripping (GPS + device identity) | Implemented; device verification pending |
 | EXIF author / copyright fields | Implemented; device verification pending |
 | Camera presets (save/apply/delete) | Implemented; device verification pending |
-| Pin a setting to the top bar | Implemented; device verification pending |
+| Up to four quick-access settings | Implemented; device verification pending |
 | Subject tracking (photo + video) | Done, device-verified (added in v1.2.0) |
 | Launcher shortcuts | Implemented; device verification pending |
 | Continuous shot (hold shutter) | Implemented; device verification pending |
@@ -47,8 +47,7 @@ Current release: **v1.2.0** (`versionCode 5`), debug-signed, `minSdk 33` (Androi
 | Watermark camera parameters | Implemented; device verification pending |
 | Captures in DCIM/Camera | Implemented; device verification pending |
 | Gallery app picker | Implemented; device verification pending |
-| In-app video playback | Implemented; device verification pending |
-| Gallery hand-off and in-app gallery | Done, device-verified |
+| System gallery hand-off + lower-left last-capture preview | Handoff previously device-verified; preview awaits device verification |
 | 311 JVM unit tests | Green |
 
 Feature-by-feature status against the original-app inventory, including what is a clean-room substitute rather than a reproduction, is tracked in [notes/FEATURE-COVERAGE.md](notes/FEATURE-COVERAGE.md); device checks are logged in [notes/PLAN-v1.1.md](notes/PLAN-v1.1.md).
@@ -117,7 +116,7 @@ The carousel ships eleven entries: **PHOTO, PORTRAIT, BEAUTY, NIGHT, PANORAMA, M
 - **Metadata privacy**: a STRIP METADATA toggle removes GPS and device/lens identity tags from saved JPEGs while keeping orientation and capture time, and EXIF AUTHOR / EXIF COPYRIGHT fields stamp the file (GrapheneOS Secure Camera's strip switch, Open Camera's custom Exif text). DNG files are never rewritten.
 - **Presets** (MORE tab): save the whole capture configuration plus the look under a name, re-apply it in one tap, and delete it. Stored as a readable text blob through a unit-tested codec, so an older or newer blob still loads.
 - **Pin to top bar** (MORE tab): pin the aspect ratio, photo size, flash, look or timer to a single viewfinder chip that reads out the current value and cycles it on tap — a 50 MP capture no longer costs a trip through two menus.
-- Captures are written to the standard **`DCIM/Camera`** folder (photos and videos) — the same place the original app saves — and the in-app gallery reads its own rows back by owner package.
+- Captures are written to the standard **`DCIM/Camera`** folder (photos and videos) — the same place the original app saves. The lower-left shutter-side circle previews the latest capture.
 - Watermark stamp: on/off with date, time, location, author and camera-parameters lines.
 
 ### Subject tracking (new in v1.2.0)
@@ -208,14 +207,13 @@ A clean-room tracking autofocus for both photo modes and video:
 
 ### Gallery
 
-- The gallery button opens the **system gallery app directly on the newest capture** (Atom-11+-safe resolution chain: review action → default viewer → gallery-only VIEW → gallery home — never the system chooser). The camera settings can pin the app to use; automatic resolution stays the default, and a pinned app that is later uninstalled falls back to it.
-- In-app fallback grid and viewer: full-screen photos (`Fit`) with share, favourite and delete, and **in-app video playback** through the platform's own transport controls — no bounce out to another app.
+- Tapping the lower-left latest-capture preview opens the **installed system gallery app on that photo/video** (review action → default viewer → gallery-only VIEW → gallery home; no chooser and no internal-gallery fallback). The camera settings can pin the app to use; automatic resolution stays the default, and a pinned app that is later uninstalled falls back to another external handler.
 
 ### Settings sheet
 
 - All capture preferences in one categorised sheet: flash/screen flash, aspect ratio, resolution, still quality, Ultra HDR, auto-level, RAW, video quality/fps, self-timer (delay, shot series, voice countdown), focus assist and bracketing, exposure bracketing/fusion, grid, volume-key shutter, touch shutter, shutter sound, mirror capture, focus timeout, anti-flicker, ghost image, default focal, barcode types, metadata privacy, watermark, processing intent and looks.
 - Preferences persist across launches and are applied live where the session allows.
-- **PRESETS** save the whole configuration under a name for one-tap recall, **PIN TO TOP BAR** keeps a single setting on the viewfinder, and **RESTORE DEFAULTS** resets capture settings, look and watermark in one tap.
+- **PRESETS** save the whole configuration under a name for one-tap recall, **QUICK ACCESS** pins up to four settings in a horizontally scrollable viewfinder row, and **RESTORE DEFAULTS** asks before resetting capture settings, look, watermark and gallery preference.
 
 ### UI & layout
 
@@ -228,7 +226,7 @@ A clean-room tracking autofocus for both photo modes and video:
 
 - Device-verified on Nothing Phone (A001), Android 16: preview, still capture (pose-aware uprighting), ZSL, gallery hand-off, tracking (photo/video/front camera), processing sheet, expert controls and the camera-settings flows.
 - Feature rows marked 🟡 in [notes/FEATURE-COVERAGE.md](notes/FEATURE-COVERAGE.md) are implemented but depend on hardware/provider behaviour and are not guaranteed on every device (slow motion rates, time-lapse cadence, extensions, RAW output, stabilization).
-- The unreleased work on `main` (overlays, sticky exposure, anti-flicker, focus timeout, bracketing/fusion/stacking, focus assist, auto-level, Ultra HDR, ghost image, RAW-only, default focal, timer series, barcode types, metadata privacy, presets/pinning, resolution-aware zoom and still quality) compiles and has JVM coverage, but has not been through a hardware pass: it is listed as **device verification pending** everywhere rather than claimed as working.
+- The unreleased work on `main` (overlays, sticky exposure, anti-flicker, focus timeout, bracketing/fusion/stacking, focus assist, auto-level, Ultra HDR, ghost image, RAW-only, default focal, timer series, barcode types, metadata privacy, presets/quick-access pins, resolution-aware zoom, still quality and the latest-capture preview) compiles and has JVM coverage, but has not been through a hardware pass: it is listed as **device verification pending** everywhere rather than claimed as working.
 - Vendor-only features that this project intentionally does **not** reproduce: beauty-video pipelines, AI scene detection, gender estimate, glyph/LED flash, Morpho/Tetras LUT packs, motion photo, Ultra XDR, 50 MP remosaic, super-resolution, TurboNight, tele-macro, depth-segmentation portrait and OEM panorama engines. Clean-room substitutes are labelled as such in the app and in the coverage matrix; no parity is claimed for them.
 
 ## Building
@@ -268,7 +266,7 @@ Runtime requirement: Android 13 or newer (`minSdk 33` — the preview-parity GL 
   - `camera/ViewfinderAnalyzer.kt`, `camera/OverlayMasks.kt` — the shared luma stream and the pure zebra/peaking mask maths
   - `camera/CaptureProfile.kt`, `camera/LevelMath.kt` — pure policy math
   - `media/SystemGallery.kt`, `media/MediaLibrary.kt`, `media/ExifPrivacy.kt` — gallery hand-off resolution, MediaStore queries and the EXIF privacy pass
-  - `ui/CameraScreen.kt`, `ui/GalleryScreen.kt`, `ui/FocusControls.kt`, `ui/FocusAssist.kt`, `ui/CompositionOverlay.kt`, `ui/ProcessingSheet.kt`, `ui/CameraPlusApp.kt`, `ui/ViewfinderOverlays.kt`, `ui/GhostImage.kt`, `ui/VoiceCountdown.kt`, `ui/theme/Theme.kt` — Compose UI
+  - `ui/CameraScreen.kt`, `ui/FocusControls.kt`, `ui/FocusAssist.kt`, `ui/CompositionOverlay.kt`, `ui/ProcessingSheet.kt`, `ui/CameraPlusApp.kt`, `ui/ViewfinderOverlays.kt`, `ui/GhostImage.kt`, `ui/VoiceCountdown.kt`, `ui/theme/Theme.kt` — Compose UI
   - `processing/` — software still pipeline (`ImageProcessor` pure math, `JpegProcessor` glue, `WatermarkRenderer`)
   - `settings/` — capture/processing/watermark preference models, the preset codec and stores
 - `app/src/test/` — JVM unit tests (311)

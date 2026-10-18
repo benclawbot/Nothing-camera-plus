@@ -245,6 +245,10 @@ class CameraSession(
     private var ultraHdrSupported = false
     private var ultraHdrActive = false
     private var multiFrameCaptureActive = false
+    /** Capture-setting mutations defer their individual rebind requests. */
+    private var settingsBatchDepth = 0
+    private var settingsBatchNeedsRebind = false
+    private var settingsBatchErrorSink: (Exception) -> Unit = {}
     private var barcodeScanning = BarcodeScanning.QR_ONLY
     private var stripMetadata = false
     private var exifAuthor: String? = null
@@ -268,6 +272,32 @@ class CameraSession(
     private var lookEnabled = false
     private val lookParameters = LookParameters()
     private var lookEffect: LookEffect? = null
+
+    /**
+     * Applies a group of capture preference changes and binds once if any of
+     * them changed the use-case graph. Preset recall and multi-option sheet
+     * changes should not tear down/reopen the camera once per field.
+     */
+    fun updateSettingsAtomically(
+        onError: (Exception) -> Unit = {},
+        update: CameraSession.() -> Unit,
+    ) {
+        val outermost = settingsBatchDepth == 0
+        if (outermost) {
+            settingsBatchNeedsRebind = false
+            settingsBatchErrorSink = onError
+        }
+        settingsBatchDepth++
+        try {
+            update(this)
+        } finally {
+            settingsBatchDepth--
+            if (settingsBatchDepth == 0 && settingsBatchNeedsRebind) {
+                settingsBatchNeedsRebind = false
+                rebind(settingsBatchErrorSink)
+            }
+        }
+    }
 
     fun bind(
         previewView: PreviewView,
@@ -2113,6 +2143,10 @@ class CameraSession(
     }
 
     private fun rebind(onError: (Exception) -> Unit = {}) {
+        if (settingsBatchDepth > 0) {
+            settingsBatchNeedsRebind = true
+            return
+        }
         if (suspended) return
         val provider = cameraProvider ?: return
         val previewView = boundPreviewView ?: return
