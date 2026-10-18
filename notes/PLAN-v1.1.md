@@ -236,3 +236,9 @@
   the existing chain when it cannot serve, so an uninstalled pin is harmless.
   Full reset returns the picker to Automatic. 234 JVM tests pass (2 new); APK
   compiles. Device verification pending.
+- 2026-10-18: in-app video playback. The gallery viewer's video branch renders
+  a platform `VideoView` through `AndroidView` with its own `MediaController`,
+  auto-play and looping, and stops/releases the player in a `DisposableEffect`
+  when the viewer closes. The old "Tap to open in your video player" hand-off
+  and its helper are gone; Share on a video still uses the system chooser. 234
+  JVM tests pass; APK compiles. Device verification pending.

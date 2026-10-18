@@ -25,15 +25,14 @@ look, and the new subject tracking. Closed 2026-10-18: launcher shortcuts
 (static core set plus a shortcut intent that reaches every mode), the
 hold-shutter continuous shot (10-frame cap, PHOTO/EXPERT only), focal-length
 zoom labels, the settings sheet's restore-defaults action, the watermark
-camera-parameters line and `DCIM/Camera` storage for photos and videos, plus a
-gallery-app picker in the camera settings.
+camera-parameters line, `DCIM/Camera` storage for photos and videos, a
+gallery-app picker in the camera settings and in-app video playback.
 
 Genuine remaining gaps (clean-room implementable):
 
 | Gap | Effort | Note |
 |---|---|---|
 | Expert histogram / pro meter | medium | needs live luma statistics in the viewfinder |
-| In-app video playback | medium | videos hand off to the system player |
 | Video encoder picker (H.264 / H.265) | medium | CameraX Recorder picks the codec; Camera2 recorder path needed |
 | Video HDR / SHDR toggles | medium | device/extension dependent |
 | Night video mode | medium | |
@@ -326,8 +325,8 @@ unit-tested math component does not count as hardware feature parity.
 | Watermark on/off and logo/time/date/location/author/camera-parameters options | ✅ | software text stamp; camera parameters read from the still's EXIF plus session lens data; original artwork/style not mirrored |
 | Glyph mirror preference | ⬜ | `glyph_mirror` |
 | QR-code scanning | ✅ | local ZXing QR analyzer with open/copy actions; not every barcode type |
-| In-app recent gallery and photo viewer | 🟡 | gallery button hands off to the system gallery app (newest item); in-app grid/viewer kept as the no-gallery-app fallback |
-| In-app video playback | ⬜ | video opens in a system player instead |
+| In-app recent gallery and photo viewer | ✅ | gallery button hands off to the system gallery app (newest item, or the pinned app); in-app grid/viewer kept as the no-gallery-app fallback |
+| In-app video playback | ✅ | platform `VideoView` with media controls, looping playback, released when the viewer closes |
 | Gallery delete/favorite/info actions | 🟡 | delete/favorite/date/size implemented; crop/rotate/editor absent |
 | Motion-photo playback in gallery | 🚫 | motion photo capture absent |
 | Shutter sound toggle | ✅ | MediaActionSound toggle; hardware/region policy may override |

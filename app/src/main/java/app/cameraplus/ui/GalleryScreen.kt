@@ -3,6 +3,8 @@ package app.cameraplus.ui
 import android.content.Intent
 import android.graphics.Bitmap
 import android.net.Uri
+import android.widget.MediaController
+import android.widget.VideoView
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -38,6 +40,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -57,6 +60,7 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.viewinterop.AndroidView
 import kotlinx.coroutines.launch
 import app.cameraplus.media.MediaLibrary
 import app.cameraplus.ui.theme.Black
@@ -66,9 +70,9 @@ import app.cameraplus.ui.theme.White
 
 /**
  * The gallery (v1.1): what Camera+ has actually saved, newest first, with a
- * full-screen viewer. Photos open in-app; videos hand off to the system
- * player, which is the honest way to play video without dragging a whole
- * media stack into this app.
+ * full-screen viewer. Photos open in-app, and since 2026-10-18 videos play
+ * in-app as well, through the platform's own `VideoView` controls — no extra
+ * media stack, and no bounce out to another app.
  */
 @Composable
 fun GalleryScreen(
@@ -283,19 +287,16 @@ private fun Viewer(
         ) {
             val image = bitmap
             when {
+                item.isVideo -> VideoPlayer(
+                    uri = item.uri,
+                    modifier = Modifier.fillMaxSize(),
+                )
+
                 image != null -> Image(
                     bitmap = image.asImageBitmap(),
                     contentDescription = item.displayName,
                     contentScale = ContentScale.Fit,
                     modifier = Modifier.fillMaxSize(),
-                )
-
-                item.isVideo -> Text(
-                    text = "Tap to open in your video player",
-                    color = White,
-                    fontFamily = FontFamily.Monospace,
-                    style = MaterialTheme.typography.bodyMedium,
-                    modifier = Modifier.clickable { openExternally(context, item.uri, "video/*") },
                 )
 
                 else -> Text(
@@ -351,13 +352,36 @@ private fun share(context: android.content.Context, item: MediaLibrary.Item) {
     }
 }
 
-private fun openExternally(context: android.content.Context, uri: Uri, mime: String) {
-    runCatching {
-        context.startActivity(
-            Intent(Intent.ACTION_VIEW).apply {
-                setDataAndType(uri, mime)
-                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-            },
-        )
+/**
+ * In-app video playback (2026-10-18): a plain platform [VideoView] with its
+ * own [MediaController], so a clip plays where it was opened. The clip loops
+ * like a preview instead of freezing on its last frame, and the player is
+ * released as soon as the viewer moves on.
+ */
+@Composable
+private fun VideoPlayer(uri: Uri, modifier: Modifier = Modifier) {
+    val context = LocalContext.current
+    var player by remember(uri) { mutableStateOf<VideoView?>(null) }
+    AndroidView(
+        factory = { ctx ->
+            VideoView(ctx).apply {
+                setVideoURI(uri)
+                setOnPreparedListener { media ->
+                    media.isLooping = true
+                    start()
+                }
+                val controller = MediaController(ctx)
+                controller.setAnchorView(this)
+                setMediaController(controller)
+                player = this
+            }
+        },
+        modifier = modifier,
+    )
+    DisposableEffect(uri) {
+        onDispose {
+            player?.stopPlayback()
+            player = null
+        }
     }
 }

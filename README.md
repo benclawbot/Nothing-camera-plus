@@ -24,6 +24,7 @@ Current release: **v1.2.0** (`versionCode 5`), debug-signed, `minSdk 33` (Androi
 | Watermark camera parameters | Implemented; device verification pending |
 | Captures in DCIM/Camera | Implemented; device verification pending |
 | Gallery app picker | Implemented; device verification pending |
+| In-app video playback | Implemented; device verification pending |
 | Gallery hand-off and in-app gallery | Done, device-verified |
 | 213 JVM unit tests | Green |
 
@@ -149,7 +150,7 @@ A clean-room tracking autofocus for both photo modes and video:
 ### Gallery
 
 - The gallery button opens the **system gallery app directly on the newest capture** (Atom-11+-safe resolution chain: review action → default viewer → gallery-only VIEW → gallery home — never the system chooser). The camera settings can pin the app to use; automatic resolution stays the default, and a pinned app that is later uninstalled falls back to it.
-- In-app fallback grid with a photo viewer, share, favourite and delete; videos hand off to the system player.
+- In-app fallback grid and viewer: full-screen photos (`Fit`) with share, favourite and delete, and **in-app video playback** through the platform's own transport controls — no bounce out to another app.
 
 ### Settings sheet
 
