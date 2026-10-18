@@ -62,6 +62,9 @@ Nothing community's own camera feedback threads (`nothing.community`).
 | Sticky exposure (KEEP EXPOSURE) | Nothing forum request ("persistent exposure compensation setting") | Implemented; device verification pending |
 | Anti-flicker 50/60 Hz anti-banding | Nothing forum request ("Anti-Banding settings") | Implemented; device verification pending |
 | Focus timeout after tap-to-focus | GrapheneOS Secure Camera | Implemented; device verification pending |
+| Exposure bracketing (3 or 5 shots, ±2 EV) | Open Camera; Nothing forum bracketing suggestion | Implemented; device verification pending |
+| Ghost image / onion skin of the last shot | Open Camera | Implemented; device verification pending |
+| RAW ONLY (DNG without a companion JPEG) | Open Camera | Implemented; device verification pending |
 
 ---
 
@@ -246,7 +249,7 @@ unit-tested math component does not count as hardware feature parity.
 | Remosaic 50MP capture | 🚫 | `RemosaicMode`, `NT_REMOSAIC_CAPTURE_KEY` |
 | Super-resolution capture / zoom | ⬜ | `SRModeHelper`, `RawSuperResolutionHelper` |
 | Motion photo / live photo on/off | 🚫 | `MotionManager`, `TemplateMtkMotionMode` |
-| RAW + companion JPEG / DNG | 🟡 | correct CameraX overload implemented; actual device capability/output unverified |
+| RAW + companion JPEG / DNG | 🟡 | correct CameraX overload implemented; actual device capability/output unverified. RAW ONLY (DNG with no companion JPEG) added 2026-10-18 |
 | Flash Off / On / Auto | ✅ | CameraX OFF/AUTO/ON; hardware behavior unverified |
 | Steady torch | ✅ | torch available in Video mode |
 | Screen flash / Glyph flash / LED variants | 🟡 | ScreenFlashView screen flash cycles with the flash button; Glyph/LED flash variants are vendor hardware |

@@ -275,3 +275,15 @@
   viewfinder slider persisting each change. The settings sheet gains FOCUS
   TIMEOUT, ANTI-FLICKER and KEEP EXPOSURE rows. 253 JVM tests pass (4 new);
   APK compiles. Device verification pending.
+- 2026-10-18: photographer kit — exposure bracketing, ghost image, RAW only.
+  `ExposureBracket` (off / 3 shot ±2 EV / 5 shot ±2 EV) is converted from EV
+  to compensation-index offsets against the camera's own step by
+  `ExposureBracketPlan` (pure, unit-tested, folding duplicate indexes away on
+  coarse-step cameras); `CameraSession.captureBracket` moves the index,
+  settles, captures and restores the dialled-in value, reporting progress so
+  the viewfinder reads BRACKET n/N. `RawMode` turns the EXPERT RAW chip into a
+  three-state cycle (off / RAW+JPG / RAW ONLY), with the DNG-only path writing
+  a single `image/x-adobe-dng` entry. Ghost image (Open Camera's onion skin)
+  holds the last shot over the viewfinder at 38% opacity, decoded off the main
+  thread with a power-of-two downsample (`ghostSampleSize`, unit-tested). 263
+  JVM tests pass (10 new); APK compiles. Device verification pending.

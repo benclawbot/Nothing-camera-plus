@@ -37,6 +37,7 @@ import app.cameraplus.settings.WatermarkOptions
 import app.cameraplus.settings.CapturePreferences
 import app.cameraplus.camera.FlashChoice
 import app.cameraplus.camera.AntiBanding
+import app.cameraplus.camera.ExposureBracket
 import app.cameraplus.camera.FocusTimeout
 import app.cameraplus.camera.PhotoAspectRatio
 import app.cameraplus.camera.PhotoResolution
@@ -186,6 +187,15 @@ fun ProcessingSheet(
                         AntiBanding.entries.firstOrNull { it.label == value }?.let {
                             onCapturePreferencesChange(capturePreferences.copy(antiBanding = it))
                         }
+                    }
+                    SettingsChoices("EXPOSURE BRACKET", capturePreferences.exposureBracket.label,
+                        ExposureBracket.entries.map { it.label }) { value ->
+                        ExposureBracket.entries.firstOrNull { it.label == value }?.let {
+                            onCapturePreferencesChange(capturePreferences.copy(exposureBracket = it))
+                        }
+                    }
+                    SettingsToggle("GHOST IMAGE", capturePreferences.ghostImage) {
+                        onCapturePreferencesChange(capturePreferences.copy(ghostImage = !capturePreferences.ghostImage))
                     }
                 }
 

@@ -82,6 +82,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
@@ -105,12 +106,15 @@ import androidx.lifecycle.compose.LocalLifecycleOwner
 import app.cameraplus.camera.FlashChoice
 import app.cameraplus.camera.PhotoAspectRatio
 import app.cameraplus.camera.PhotoResolution
+import app.cameraplus.camera.RawMode
 import app.cameraplus.camera.VideoFrameRate
 import app.cameraplus.camera.ModeZoomPlan
 import app.cameraplus.camera.ZoomUseCase
 import app.cameraplus.camera.WhiteBalancePreset
 import app.cameraplus.camera.LensZoomPlan
 import app.cameraplus.camera.ManualControlPlan
+import app.cameraplus.camera.ExposureBracket
+import app.cameraplus.camera.ExposureBracketPlan
 import app.cameraplus.camera.LumaHistogram
 import app.cameraplus.camera.ManualControls
 import app.cameraplus.camera.OverlayMasks
@@ -295,6 +299,22 @@ fun CameraScreen(
         }
     }
     var lastMediaUri by remember { mutableStateOf<Uri?>(null) }
+    var ghostEnabled by remember { mutableStateOf(capturePreferences.ghostImage) }
+    var ghostBitmap by remember { mutableStateOf<ImageBitmap?>(null) }
+
+    // Ghost image / onion skin: hold the last shot over the viewfinder at low
+    // opacity so a repeat composition lines up. Decoded off the main thread and
+    // downsampled, because the last shot may be tens of megapixels.
+    LaunchedEffect(ghostEnabled, lastMediaUri) {
+        if (!ghostEnabled) {
+            ghostBitmap = null
+            return@LaunchedEffect
+        }
+        val uri = lastMediaUri ?: return@LaunchedEffect
+        ghostBitmap = withContext(Dispatchers.IO) {
+            runCatching { decodeGhostBitmap(context, uri) }.getOrNull()
+        }
+    }
     var dismissedQrValue by remember { mutableStateOf<String?>(null) }
     var bokehLevel by remember { mutableFloatStateOf(capturePreferences.portraitBlurLevel) }
     val panoramaCapture = remember { PanoramaCapture() }
@@ -382,7 +402,7 @@ fun CameraScreen(
     var timerDeadline by remember { mutableStateOf(0L) }
     var timerLeft by remember { mutableIntStateOf(0) }
     var pendingShot by remember { mutableStateOf(false) }
-    var rawEnabled by remember { mutableStateOf(false) }
+    var rawMode by remember { mutableStateOf(RawMode.OFF) }
     var isoGauge by remember { mutableStateOf(0f) }
     var speedGauge by remember { mutableStateOf(0f) }
     var focusGauge by remember { mutableStateOf(0f) }
@@ -514,6 +534,7 @@ fun CameraScreen(
         histogramArmed = options.histogramEnabled
         zebrasArmed = options.zebrasEnabled
         peakingArmed = options.peakingEnabled
+        ghostEnabled = options.ghostImage
         photoHdrEnabled = options.photoHdrEnabled && capabilities.hdrExtensionAvailable
         timeLapseSpeed = options.timeLapseSpeed
         slowMotionFps = options.slowMotionFps
@@ -594,7 +615,7 @@ fun CameraScreen(
             },
             onCapabilities = { published ->
                 capabilities = published
-                if (!published.rawSupported) rawEnabled = false
+                if (!published.rawSupported) rawMode = RawMode.OFF
                 if (videoFrameRate !in published.supportedVideoFrameRates) {
                     videoFrameRate = published.supportedVideoFrameRates.first()
                 }
@@ -1118,6 +1139,39 @@ fun CameraScreen(
         }
     }
 
+    /** One press, several exposures: see [ExposureBracketPlan]. */
+    fun bracketEligible(): Boolean =
+        capturePreferences.exposureBracket.enabled &&
+            (mode == CameraMode.PHOTO || mode == CameraMode.EXPERT) &&
+            !processingCapture
+
+    fun startBracket() {
+        val offsets = ExposureBracketPlan.indexOffsets(
+            capturePreferences.exposureBracket.evOffsets,
+            capabilities.evStep,
+        )
+        if (offsets.isEmpty()) {
+            captureNow()
+            return
+        }
+        session.captureBracket(
+            baseIndex = evIndex,
+            indexOffsets = offsets,
+            settings = processing,
+            onProgress = { shot, total -> status = "BRACKET $shot/$total" },
+            onSaved = { uri -> lastMediaUri = uri },
+            onNote = { note -> status = note },
+            onFinished = { shots ->
+                inFlight = (inFlight - 1).coerceAtLeast(0)
+                status = "Bracket: $shots ${if (shots == 1) "shot" else "shots"}"
+            },
+            onError = { error ->
+                inFlight = (inFlight - 1).coerceAtLeast(0)
+                status = error.message ?: "Bracket failed"
+            },
+        )
+    }
+
     fun pressStillShutter() {
         if (processingCapture || inFlight >= MAX_IN_FLIGHT) return
         shutterPulse++
@@ -1129,7 +1183,7 @@ fun CameraScreen(
             }
         } else if (mode == CameraMode.PHOTO || mode == CameraMode.EXPERT) {
             inFlight++
-            captureNow()
+            if (bracketEligible()) startBracket() else captureNow()
         } else {
             captureCurrentMode()
         }
@@ -1146,7 +1200,7 @@ fun CameraScreen(
             mode = selected
             if (!previous.usesCamera2Recorder && !selected.usesCamera2Recorder) {
                 if (extensionModeFor(selected, photoHdrEnabled) != ExtensionMode.NONE) {
-                    rawEnabled = false
+                    rawMode = RawMode.OFF
                     isoGauge = 0f
                     speedGauge = 0f
                     focusGauge = 0f
@@ -1161,7 +1215,7 @@ fun CameraScreen(
                         },
                     )
                 }
-                if (selected == CameraMode.VIDEO) rawEnabled = false
+                if (selected == CameraMode.VIDEO) rawMode = RawMode.OFF
             }
             if (selected != CameraMode.VIDEO) torchEnabled = false
         }
@@ -1186,17 +1240,19 @@ fun CameraScreen(
     // their own semantics and refuse the burst with a status note.
     fun burstEligible(): Boolean =
         (mode == CameraMode.PHOTO || mode == CameraMode.EXPERT) &&
-            !selfTimer.enabled && !processingCapture
+            !selfTimer.enabled && !processingCapture &&
+            !capturePreferences.exposureBracket.enabled
 
     fun burstSummary(shots: Int): String =
         "Burst: $shots ${if (shots == 1) "shot" else "shots"}"
 
     fun startBurst() {
         if (!burstEligible()) {
-            status = if (selfTimer.enabled) {
-                "Continuous shot is off with the self-timer"
-            } else {
-                "Continuous shot works in PHOTO and EXPERT"
+            status = when {
+                selfTimer.enabled -> "Continuous shot is off with the self-timer"
+                capturePreferences.exposureBracket.enabled ->
+                    "Continuous shot is off while bracketing"
+                else -> "Continuous shot works in PHOTO and EXPERT"
             }
             return
         }
@@ -1331,6 +1387,12 @@ fun CameraScreen(
             factory = { screenFlashView },
             modifier = previewFrameModifier,
         )
+        ghostBitmap?.let { ghost ->
+            GhostImageOverlay(
+                bitmap = ghost,
+                modifier = previewFrameModifier,
+            )
+        }
 
         if (mode == CameraMode.QR) {
             qrResult?.let { result ->
@@ -1855,7 +1917,7 @@ fun CameraScreen(
                         isoRange = capabilities.isoRange,
                         exposureRange = capabilities.exposureRange,
                         minFocusDistance = capabilities.minFocusDistance,
-                        rawEnabled = rawEnabled,
+                        rawMode = rawMode,
                         rawSupported = capabilities.rawSupported,
                         histogramEnabled = histogramArmed,
                         zebrasEnabled = zebrasArmed,
@@ -1888,11 +1950,15 @@ fun CameraScreen(
                                 status = error.message ?: "Could not apply manual controls"
                             }
                         },
-                        onRawToggle = {
-                            val next = !rawEnabled
-                            rawEnabled = next
-                            status = if (next) "RAW on — saved as DNG + JPEG" else "RAW off"
-                            session.setRawEnabled(next) { error ->
+                        onRawCycle = {
+                            val next = rawMode.next()
+                            rawMode = next
+                            status = when (next) {
+                                RawMode.OFF -> "RAW off"
+                                RawMode.RAW_JPEG -> "RAW on — DNG + JPEG"
+                                RawMode.RAW_ONLY -> "RAW only — DNG, no JPEG"
+                            }
+                            session.setRawMode(next) { error ->
                                 status = error.message ?: "Could not change RAW mode"
                             }
                         },
@@ -2346,7 +2412,7 @@ private fun ExpertControls(
     isoRange: IntRange?,
     exposureRange: LongRange?,
     minFocusDistance: Float?,
-    rawEnabled: Boolean,
+    rawMode: RawMode,
     rawSupported: Boolean,
     histogramEnabled: Boolean,
     zebrasEnabled: Boolean,
@@ -2359,7 +2425,7 @@ private fun ExpertControls(
     onWhiteBalanceChange: (WhiteBalancePreset) -> Unit,
     onWhiteBalanceKelvinChange: (Int) -> Unit,
     onCommit: () -> Unit,
-    onRawToggle: () -> Unit,
+    onRawCycle: () -> Unit,
     onHistogramToggle: () -> Unit,
     onZebrasToggle: () -> Unit,
     onPeakingToggle: () -> Unit,
@@ -2434,10 +2500,10 @@ private fun ExpertControls(
         }
         Spacer(Modifier.height(6.dp))
         ToggleChip(
-            label = if (rawSupported) "RAW DNG" else "RAW N/A",
-            active = rawEnabled,
+            label = if (rawSupported) rawMode.label else "RAW N/A",
+            active = rawSupported && rawMode.enabled,
             enabled = rawSupported,
-            onClick = onRawToggle,
+            onClick = onRawCycle,
         )
         Spacer(Modifier.height(6.dp))
         Row(

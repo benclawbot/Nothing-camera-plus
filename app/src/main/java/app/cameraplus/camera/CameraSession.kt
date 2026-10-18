@@ -10,6 +10,8 @@ import android.graphics.BitmapFactory
 import android.graphics.Matrix
 import android.hardware.camera2.params.RggbChannelVector
 import android.location.Location
+import android.os.Handler
+import android.os.Looper
 import android.media.MediaActionSound
 import android.hardware.camera2.CameraCharacteristics
 import android.hardware.camera2.CameraManager
@@ -102,6 +104,7 @@ class CameraSession(
     private val lifecycleOwner: LifecycleOwner,
 ) {
     private val mainExecutor: Executor = ContextCompat.getMainExecutor(context)
+    private val mainHandler = Handler(Looper.getMainLooper())
     private val ioExecutor: Executor = Executors.newSingleThreadExecutor()
     private val qrExecutor: Executor = Executors.newSingleThreadExecutor()
     private val panoramaExecutor: Executor = Executors.newSingleThreadExecutor()
@@ -115,6 +118,12 @@ class CameraSession(
 
         /** Used when the HAL does not report an AE compensation step. */
         const val DEFAULT_EV_STEP = 1f / 3f
+
+        /**
+         * Time given to auto-exposure to settle at a bracket step's new
+         * compensation index before that exposure is captured.
+         */
+        const val BRACKET_SETTLE_MILLIS = 180L
 
         /** Above this size, expose a distinct MAX capture option. */
         const val STANDARD_PHOTO_PIXEL_THRESHOLD = 12_000_000L
@@ -208,7 +217,7 @@ class CameraSession(
     private var flashChoice = FlashChoice.OFF
     private var screenFlash: ImageCapture.ScreenFlash? = null
     private var torchEnabled = false
-    private var rawEnabled = false
+    private var rawMode = RawMode.OFF
     @Volatile private var mirrorCaptureEnabled = false
     private var shutterSoundEnabled = true
     private var shutterSound: MediaActionSound? = null
@@ -368,7 +377,7 @@ class CameraSession(
         requestedExtensionMode = if (newMode == SessionMode.VIDEO) ExtensionMode.NONE else extensionMode
         macroEnabled = newMode != SessionMode.VIDEO && macroMode
         if (newMode == SessionMode.VIDEO || requestedExtensionMode != ExtensionMode.NONE) {
-            rawEnabled = false
+            rawMode = RawMode.OFF
             manualControls = ManualControls()
         }
         if (mode != SessionMode.VIDEO) torchEnabled = false
@@ -416,7 +425,7 @@ class CameraSession(
         val desiredZsl = CaptureProfile.usesZeroShutterLag(
             zslSupported = zeroShutterLagSupported && requestedExtensionMode == ExtensionMode.NONE,
             flashEnabled = flashChoice != FlashChoice.OFF,
-            rawEnabled = rawEnabled,
+            rawEnabled = rawMode.enabled,
             manualControlsActive = !manualControls.isAuto(),
             highResolutionActive = photoResolution == PhotoResolution.MAXIMUM,
         )
@@ -961,10 +970,14 @@ class CameraSession(
         if (mode == SessionMode.VIDEO) rebind(onError)
     }
 
-    fun setRawEnabled(enabled: Boolean, onError: (Exception) -> Unit = {}) {
-        if (rawEnabled == enabled) return
-        rawEnabled = enabled
-        if (mode != SessionMode.VIDEO) rebind(onError)
+    /**
+     * RAW policy: off, DNG plus companion JPEG (what the original does), or
+     * DNG alone for people who develop their own files.
+     */
+    fun setRawMode(mode: RawMode, onError: (Exception) -> Unit = {}) {
+        if (rawMode == mode) return
+        rawMode = mode
+        if (this.mode != SessionMode.VIDEO) rebind(onError)
     }
 
     /**
@@ -1048,7 +1061,8 @@ class CameraSession(
         }
         val uprightRotation = uprightCaptureRotation()
         when {
-            rawEnabled -> captureRawToFile(capture, uprightRotation, onSaved, onError)
+            rawMode == RawMode.RAW_ONLY -> captureRawOnlyToFile(capture, onSaved, onError)
+            rawMode == RawMode.RAW_JPEG -> captureRawToFile(capture, uprightRotation, onSaved, onError)
             settings == ProcessingSettings.NATURAL &&
                 !watermarkOptions.enabled &&
                 !shouldMirrorCapture() ->
@@ -1433,6 +1447,97 @@ class CameraSession(
         )
     }
 
+    /**
+     * RAW-only capture: a single DNG and no companion JPEG. A DNG carries its
+     * own orientation, so nothing is baked afterwards.
+     */
+    private fun captureRawOnlyToFile(
+        capture: ImageCapture,
+        onSaved: (Uri) -> Unit,
+        onError: (Exception) -> Unit,
+    ) {
+        val name = "CameraPlus_${System.currentTimeMillis()}"
+        val values = ContentValues().apply {
+            put(MediaStore.Images.Media.DISPLAY_NAME, "$name.dng")
+            put(MediaStore.Images.Media.MIME_TYPE, "image/x-adobe-dng")
+            put(MediaStore.Images.Media.RELATIVE_PATH, MediaPaths.RELATIVE_PATH)
+        }
+        val options = ImageCapture.OutputFileOptions
+            .Builder(context.contentResolver, MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values)
+            .setMetadata(captureMetadata())
+            .build()
+        capture.takePicture(options, mainExecutor, object : ImageCapture.OnImageSavedCallback {
+            override fun onCaptureStarted() = playShutterSound()
+
+            override fun onImageSaved(outputFileResults: ImageCapture.OutputFileResults) {
+                val uri = outputFileResults.savedUri
+                if (uri != null) {
+                    onSaved(uri)
+                } else {
+                    onError(IllegalStateException("CameraX returned no saved MediaStore URI"))
+                }
+            }
+
+            override fun onError(exception: ImageCaptureException) {
+                onError(exception)
+            }
+        })
+    }
+
+    /**
+     * Exposure bracketing: one press, one still per EV offset. The
+     * compensation index moves before each shot and the base index is restored
+     * afterwards, so the viewfinder brightness the user dialled in survives the
+     * bracket. Each shot is given a short settle time for auto-exposure to
+     * converge at the new index, because the index is applied to the repeating
+     * request rather than to a single capture request.
+     */
+    fun captureBracket(
+        baseIndex: Int,
+        indexOffsets: List<Int>,
+        settings: ProcessingSettings,
+        onProgress: (Int, Int) -> Unit,
+        onSaved: (Uri) -> Unit,
+        onFinished: (Int) -> Unit,
+        onNote: (String) -> Unit = {},
+        onError: (Exception) -> Unit,
+    ) {
+        if (indexOffsets.isEmpty()) {
+            onError(IllegalStateException("Nothing to bracket"))
+            return
+        }
+        var shots = 0
+        fun finishWithError(error: Exception) {
+            setExposureCompensationIndex(baseIndex)
+            onError(error)
+        }
+        fun step(position: Int) {
+            if (position >= indexOffsets.size) {
+                setExposureCompensationIndex(baseIndex)
+                onFinished(shots)
+                return
+            }
+            setExposureCompensationIndex(baseIndex + indexOffsets[position])
+            onProgress(position + 1, indexOffsets.size)
+            mainHandler.postDelayed(
+                {
+                    capture(
+                        settings = settings,
+                        onSaved = { uri ->
+                            shots++
+                            onSaved(uri)
+                            step(position + 1)
+                        },
+                        onNote = onNote,
+                        onError = { error -> finishWithError(error) },
+                    )
+                },
+                BRACKET_SETTLE_MILLIS,
+            )
+        }
+        step(0)
+    }
+
     private fun createEntry(): Pair<Uri, ContentValues>? {
         val name = "CameraPlus_${System.currentTimeMillis()}"
         val values = ContentValues().apply {
@@ -1713,7 +1818,7 @@ class CameraSession(
         // telephoto on several phones — the "stuck at 2x, no 0.6x/1x" bug).
         val targetId = selectedCameraId ?: layout.referenceCameraId
         if (targetId != selectedCameraId) selectedCameraId = targetId
-        if (rawEnabled && cameraFlags[targetId]?.raw != true) rawEnabled = false
+        if (rawMode.enabled && cameraFlags[targetId]?.raw != true) rawMode = RawMode.OFF
         if (photoResolution == PhotoResolution.MAXIMUM &&
             (cameraFlags[targetId]?.maxJpegPixels ?: 0L) <= STANDARD_PHOTO_PIXEL_THRESHOLD
         ) {
@@ -1885,8 +1990,12 @@ class CameraSession(
                 // capture above.
                 .setTargetRotation(Surface.ROTATION_0)
                 .setOutputFormat(
-                    if (rawEnabled && cameraFlags[targetId]?.raw == true) {
-                        ImageCapture.OUTPUT_FORMAT_RAW_JPEG
+                    if (rawMode.enabled && cameraFlags[targetId]?.raw == true) {
+                        if (rawMode == RawMode.RAW_ONLY) {
+                            ImageCapture.OUTPUT_FORMAT_RAW
+                        } else {
+                            ImageCapture.OUTPUT_FORMAT_RAW_JPEG
+                        }
                     } else {
                         ImageCapture.OUTPUT_FORMAT_JPEG
                     },
@@ -2406,7 +2515,7 @@ class CameraSession(
         if (CaptureProfile.usesZeroShutterLag(
                 zslSupported = zeroShutterLagSupported && requestedExtensionMode == ExtensionMode.NONE,
                 flashEnabled = flashChoice != FlashChoice.OFF,
-                rawEnabled = rawEnabled,
+                rawEnabled = rawMode.enabled,
                 manualControlsActive = !manualControls.isAuto(),
                 highResolutionActive = photoResolution == PhotoResolution.MAXIMUM,
             )
