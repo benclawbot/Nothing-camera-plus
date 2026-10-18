@@ -1,10 +1,20 @@
 package app.cameraplus.camera
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class VideoProfileTest {
+
+    @Test
+    fun focalLabelsAreRoundedEquivalentMillimetres() {
+        assertEquals("24mm", LensZoomPlan.focalLabel(24f))
+        assertEquals("14mm", LensZoomPlan.focalLabel(14.36f))
+        assertEquals("269mm", LensZoomPlan.focalLabel(268.7f))
+        assertNull(LensZoomPlan.focalLabel(0f))
+        assertNull(LensZoomPlan.focalLabel(Float.NaN))
+    }
 
     @Test
     fun prefersPreviewStabilization() {

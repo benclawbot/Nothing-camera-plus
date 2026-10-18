@@ -19,6 +19,8 @@ Current release: **v1.2.0** (`versionCode 5`), debug-signed, `minSdk 33` (Androi
 | Subject tracking (photo + video) | Done, device-verified (added in v1.2.0) |
 | Launcher shortcuts | Implemented; device verification pending |
 | Continuous shot (hold shutter) | Implemented; device verification pending |
+| Focal-length zoom labels | Implemented; device verification pending |
+| Restore defaults | Implemented; device verification pending |
 | Gallery hand-off and in-app gallery | Done, device-verified |
 | 213 JVM unit tests | Green |
 
@@ -75,6 +77,7 @@ A clean-room tracking autofocus for both photo modes and video:
 
 - Zoom stops derived from lenses exposed by the public CameraX/Camera2 API. On devices exposing only one public back camera, stops above 1x are digital crops; hidden OEM physical lenses are not claimed as available.
 - Pinch-to-zoom with honest hardware-range clamping and a shared CameraX capture viewport, so the framing shown is the crop saved to the file; per-mode caps still apply.
+- Zoom chips are labelled with their 35 mm-equivalent focal length ("24mm"), computed from the serving lens' focal length and sensor size; the live readout keeps the ratio and adds the equivalent focal while pinching.
 - Front/back switch that keeps mode and preferences.
 
 ### Video
@@ -148,6 +151,7 @@ A clean-room tracking autofocus for both photo modes and video:
 
 - All capture preferences in one categorised sheet: flash/screen flash, aspect ratio, resolution, HDR, RAW, video quality/fps, self-timer, grid, volume-key shutter, touch shutter, shutter sound, mirror capture, watermark, processing intent and looks.
 - Preferences persist across launches and are applied live where the session allows.
+- **RESTORE DEFAULTS** resets capture settings, processing look and watermark in one tap.
 
 ### UI & layout
 
@@ -171,7 +175,7 @@ Requirements:
 
 ```bash
 ./gradlew :app:assembleDebug       # debug APK
-./gradlew :app:testDebugUnitTest   # JVM unit tests (223)
+./gradlew :app:testDebugUnitTest   # JVM unit tests (227)
 ```
 
 `local.properties` (git-ignored) points at your SDK:
@@ -199,7 +203,7 @@ Runtime requirement: Android 13 or newer (`minSdk 33` — the preview-parity GL 
   - `ui/CameraScreen.kt`, `ui/GalleryScreen.kt`, `ui/FocusControls.kt`, `ui/CompositionOverlay.kt`, `ui/ProcessingSheet.kt`, `ui/CameraPlusApp.kt`, `ui/theme/Theme.kt` — Compose UI
   - `processing/` — software still pipeline (`ImageProcessor` pure math, `JpegProcessor` glue, `WatermarkRenderer`)
   - `settings/` — capture/processing/watermark preference models and stores
-- `app/src/test/` — JVM unit tests (223)
+- `app/src/test/` — JVM unit tests (227)
 - `dist/` — built APKs
 
 ## License

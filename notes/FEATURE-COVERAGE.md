@@ -22,17 +22,16 @@ Status legend:
 Closed since the last pass: touch shutter, screen flash, per-mode zoom caps
 (night 30x, portrait/macro 4x, slo-mo 2x, time-lapse 10x, panorama 1x), B&W
 look, and the new subject tracking. Closed 2026-10-18: launcher shortcuts
-(static core set plus a shortcut intent that reaches every mode) and the
-hold-shutter continuous shot (10-frame cap, PHOTO/EXPERT only).
+(static core set plus a shortcut intent that reaches every mode), the
+hold-shutter continuous shot (10-frame cap, PHOTO/EXPERT only), focal-length
+zoom labels and the settings sheet's restore-defaults action.
 
 Genuine remaining gaps (clean-room implementable):
 
 | Gap | Effort | Note |
 |---|---|---|
 | Expert histogram / pro meter | medium | needs live luma statistics in the viewfinder |
-| Restore defaults | small | no global settings screen yet |
 | Default-gallery picker / user save position | small | gallery hand-off resolves packages dynamically today |
-| Focal-length labels (14/24/35mm…) | small | zoom chips show ratios only |
 | Watermark camera-parameters line | small | date/time/location/author already ship |
 | In-app video playback | medium | videos hand off to the system player |
 | Video encoder picker (H.264 / H.265) | medium | CameraX Recorder picks the codec; Camera2 recorder path needed |
@@ -94,7 +93,7 @@ ArcSoft/morpho panorama, smile shutter (vendor face ML).
 | 0.6x / 1x / 2x lens stops | 🟡 | uses public CameraX/Camera2 lens metadata; the tested A001 exposes one public back camera, so 2x+ stops are digital and hidden OEM lenses are unavailable |
 | Pinch zoom over device range | 🟡 | gestures + range clamp implemented; preview and saved still now share the same viewport |
 | Per-mode zoom caps (night 30x, slo-mo 2x, timelapse 10x) | 🟡 | CameraX modes are capped; Camera2 slow-motion/time-lapse gestures remain limited |
-| Focal-length labels (14/24/28/35mm…) | ⬜ | cosmetic |
+| Focal-length labels (14/24/28/35mm…) | ✅ | Zoom chips label stops with their 35 mm-equivalent focal ("24mm") and the live readout shows ratio + mm; conversion uses the serving lens' focal and sensor size (43.27 mm frame — the original's zoom-slider basis). Device unverified |
 
 ## Video
 
@@ -313,7 +312,7 @@ unit-tested math component does not count as hardware feature parity.
 | Expert histogram and level meter | ⬜ | composition level exists, but no histogram or Pro meter |
 | Lens stops from physical focal lengths (0.6x/1x/2x/…) | 🟡 | planner handles logical and separate cameras; actual phone inventory unverified |
 | Pinch-to-zoom and manual zoom across device range | 🟡 | implemented and clamped; range depends on hardware |
-| Original focal labels (14/24/28/35/50/85mm) | ⬜ | current UI shows zoom ratios only |
+| Original focal labels (14/24/28/35/50/85mm) | ✅ | Computed from HAL focal + sensor size (the original's own convention: 35 mm-equivalent, 43.27 mm diagonal); shown on zoom chips and the live readout; device unverified |
 
 ### AI, filters, watermark, gallery and global settings
 
@@ -336,4 +335,4 @@ unit-tested math component does not count as hardware feature parity.
 | Touch / smile shutter | 🟡 | touch shutter ships as a ProcessingSheet toggle and captures on preview taps; smile shutter absent |
 | Save-position / default-gallery selection | ⬜ | app currently writes to Camera+ MediaStore folders |
 | Anti-flicker, exposure-metering, dehaze/distortion controls | ⬜ | advanced vendor settings not implemented |
-| Restore defaults | ⬜ | no global settings screen yet |
+| Restore defaults | ✅ | Camera settings sheet: RESTORE DEFAULTS resets capture preferences, processing look and watermark (geotag switched off); device unverified |

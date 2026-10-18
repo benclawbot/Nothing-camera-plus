@@ -65,6 +65,25 @@ data class LensLayout(
     fun displayedZoomFor(cameraId: String?, zoomRatio: Float): Float =
         baseStopOf(cameraId) * zoomRatio
 
+    /** 35 mm-equivalent focal of the reference (1x) lens; the label basis. */
+    val referenceEqFocalMm: Float
+        get() = lenses.firstOrNull { it.cameraId == referenceCameraId }
+            ?.eqFocalMm?.takeIf { it > 0f } ?: LensPlan.REFERENCE_EQ_FOCAL_MM
+
+    /**
+     * 35 mm-equivalent focal length served at [displayedZoom]: the serving
+     * lens' equivalent focal scaled by its zoom ratio, so digital zoom counts.
+     * The original prints this same number on its zoom slider ("%smm", with
+     * the 43.27 mm full-frame diagonal used here). Null when the plan cannot
+     * say — the caller falls back to the ratio label.
+     */
+    fun eqFocalMmFor(displayedZoom: Float): Float? {
+        if (displayedZoom <= 0f || !displayedZoom.isFinite()) return null
+        val target = targetFor(displayedZoom, null)
+        val lens = lenses.firstOrNull { it.cameraId == target.cameraId } ?: return null
+        return (lens.eqFocalMm * target.zoomRatio).takeIf { it > 0f && it.isFinite() }
+    }
+
     /**
      * Resolves a requested displayed zoom onto a camera and ratio. The widest
      * camera that can still reach the requested zoom wins (least crop), and

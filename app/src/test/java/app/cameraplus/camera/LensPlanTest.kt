@@ -2,6 +2,7 @@ package app.cameraplus.camera
 
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import kotlin.math.abs
@@ -54,6 +55,33 @@ class LensPlanTest {
     fun stopsIncludeUltrawideMainAndTelephotoPlusDigitalLadder() {
         val layout = LensPlan.build(nothingLike)
         assertEquals(listOf(0.4f, 1f, 2f, 3f, 5f, 10f), layout.stops)
+    }
+
+    @Test
+    fun equivalentFocalLabelsComeFromTheServingLens() {
+        val layout = LensPlan.build(nothingLike)
+        // 1x is the main lens: 5.9 mm on a 7.6x5.7 mm sensor (~26.9 mm equiv).
+        assertEquals(26.9f, layout.eqFocalMmFor(1f)!!, 0.1f)
+        // The ultrawide stop serves the ultrawide sensor, not a scaled main.
+        assertEquals(14.8f, layout.eqFocalMmFor(0.4f)!!, 0.1f)
+        // 2x takes the telephoto lens (same sensor size, 12 mm).
+        assertEquals(54.6f, layout.eqFocalMmFor(2f)!!, 0.1f)
+        // 10x is digital on the main lens and scales the focal.
+        assertEquals(268.7f, layout.eqFocalMmFor(10f)!!, 1f)
+    }
+
+    @Test
+    fun referenceEqFocalFollowsTheReferenceLens() {
+        val layout = LensPlan.build(nothingLike)
+        assertEquals(26.9f, layout.referenceEqFocalMm, 0.1f)
+    }
+
+    @Test
+    fun equivalentFocalOfAnImpossibleZoomIsNull() {
+        val layout = LensPlan.build(nothingLike)
+        assertNull(layout.eqFocalMmFor(0f))
+        assertNull(layout.eqFocalMmFor(-2f))
+        assertNull(layout.eqFocalMmFor(Float.NaN))
     }
 
     @Test

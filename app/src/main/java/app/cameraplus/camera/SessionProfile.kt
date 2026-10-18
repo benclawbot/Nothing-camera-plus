@@ -12,6 +12,13 @@ data class SessionCapabilities(
     val zoomStops: List<Float> = listOf(1f),
     /** Physical focal-length stops exposed by the public camera API. */
     val opticalZoomStops: List<Float> = listOf(1f),
+    /**
+     * 35 mm-equivalent focal at each zoom stop, aligned with [zoomStops]
+     * (0 = unknown). Zoom chip labels show these instead of bare ratios.
+     */
+    val zoomStopFocalMm: List<Float> = emptyList(),
+    /** 35 mm-equivalent focal of the 1x lens, for the continuous zoom readout. */
+    val referenceEqFocalMm: Float = 0f,
     val minDisplayedZoom: Float = 1f,
     val maxDisplayedZoom: Float = 1f,
     val rawSupported: Boolean = false,

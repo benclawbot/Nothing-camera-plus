@@ -2121,6 +2121,10 @@ class CameraSession(
 
         val published = SessionCapabilities(
                 zoomStops = layout?.stops ?: listOf(1f),
+                zoomStopFocalMm = layout?.let { currentLayout ->
+                    currentLayout.stops.map { stop -> currentLayout.eqFocalMmFor(stop) ?: 0f }
+                } ?: emptyList(),
+                referenceEqFocalMm = layout?.referenceEqFocalMm ?: 0f,
                 opticalZoomStops = layout?.let { currentLayout ->
                     (currentLayout.lenses.map { it.baseStop } + currentLayout.opticalStops)
                         .distinct()

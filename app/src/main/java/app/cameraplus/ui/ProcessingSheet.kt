@@ -240,6 +240,29 @@ fun ProcessingSheet(
                     )
                 }
             }
+
+            Spacer(Modifier.height(28.dp))
+            Text(
+                text = "RESTORE DEFAULTS",
+                color = White,
+                fontFamily = FontFamily.Monospace,
+                letterSpacing = 1.5.sp,
+                style = MaterialTheme.typography.labelSmall,
+                modifier = Modifier
+                    .clickable {
+                        onCapturePreferencesChange(CapturePreferences())
+                        onSettingsChange(ProcessingSettings.NATURAL)
+                        onWatermarkChange(WatermarkOptions())
+                        if (geotagEnabled) onGeotagToggle()
+                    }
+                    .padding(vertical = 12.dp),
+            )
+            Text(
+                text = "Resets capture settings, look and watermark to their defaults.",
+                color = DimWhite,
+                style = MaterialTheme.typography.labelSmall,
+                modifier = Modifier.padding(bottom = 4.dp),
+            )
         }
     }
 }

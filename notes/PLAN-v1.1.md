@@ -80,6 +80,9 @@
 - [ ] On the target phone, launcher shortcuts: each of the five entries opens its
       mode/facing, and a shortcut tapped while the app is open (singleTop) applies
       without a stale activity or a duplicate.
+- [ ] On the target phone, zoom labels: the mm values match the lens serving each
+      stop (ultrawide/main/telephoto) and track the pinch readout; RESTORE
+      DEFAULTS returns capture, look and watermark options to their defaults.
 
 ## Status log
 
@@ -199,3 +202,15 @@
   pipelines refuse with a status note. The UI shows a running "BURST n/10" counter
   and a final count; `ContinuousShotPlan` is the pure, unit-tested policy. 223 JVM
   tests pass (10 new); APK compiles. Device verification still pending.
+- 2026-10-18: focal-length zoom labels. Zoom chips now show 35 mm-equivalent
+  focal lengths ("24mm") instead of bare ratios, and the live readout shows
+  ratio + mm while pinching. `LensLayout.eqFocalMmFor` resolves the serving lens
+  (exact for ultrawide/telephoto stops, digital zoom included) and the session
+  publishes `zoomStopFocalMm` / `referenceEqFocalMm`; same basis as the
+  original's zoom slider (`Util.formatFocalLength`, 43.27 mm frame). Device
+  verification pending.
+- 2026-10-18: restore defaults. The camera settings sheet gained a RESTORE
+  DEFAULTS action that resets capture preferences, the processing look and the
+  watermark (and switches geotag off) in one tap, mirroring the original's
+  settings-reset row. 227 JVM tests pass (4 new); APK compiles. Device verification
+  pending.

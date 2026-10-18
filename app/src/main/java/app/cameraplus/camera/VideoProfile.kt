@@ -74,6 +74,14 @@ object LensZoomPlan {
         stop % 1f == 0f -> String.format(Locale.US, "%dx", stop.toInt())
         else -> String.format(Locale.US, "%.1fx", stop)
     }
+
+    /**
+     * 35 mm-equivalent focal label, e.g. "24mm" — the original's zoom slider
+     * prints the same "%smm" value. Null when the focal is unknown (0 or
+     * garbage) so the UI can fall back to the ratio label.
+     */
+    fun focalLabel(mm: Float): String? =
+        if (mm > 0f && mm.isFinite()) String.format(Locale.US, "%dmm", mm.roundToInt()) else null
 }
 
 /** Per-mode ceilings from the original camera, bounded by the lens/hardware. */

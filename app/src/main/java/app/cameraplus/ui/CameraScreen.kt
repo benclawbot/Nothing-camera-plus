@@ -1632,10 +1632,13 @@ fun CameraScreen(
         ) {
             if (!mode.usesCamera2Recorder) {
                 ZoomPill(
-                    stops = capabilities.zoomStops.filter { it <= modeZoomMaximum + 0.01f },
+                    stops = capabilities.zoomStops,
+                    stopFocalMm = capabilities.zoomStopFocalMm,
+                    modeMaximum = modeZoomMaximum,
                     opticalStops = capabilities.opticalZoomStops,
                     current = zoom,
                     zoomable = modeZoomMaximum > capabilities.minDisplayedZoom,
+                    referenceEqFocalMm = capabilities.referenceEqFocalMm,
                     onSelect = { stop ->
                         zoom = session.setDisplayedZoom(stop) { error ->
                             status = error.message ?: "Could not switch lens"
@@ -2071,29 +2074,33 @@ fun CameraScreen(
 }
 
 /**
- * Lens stops plus the live zoom readout (v1.1).
+ * Lens stops plus the live zoom readout (v1.1; mm labels added 2026-10-18).
  *
  * The stops are the physical lenses the plan found (0.6x, 1x, 2x, …) with a
- * short digital ladder; between them the value follows the pinch gesture, so
- * the number above the pill is always the zoom the camera is really at.
- * Hidden only when the camera offers no zoom range at all.
+ * short digital ladder. Chips are labelled with their 35 mm-equivalent focal
+ * length ("24mm") like the original's zoom indicator; the live readout keeps
+ * the ratio and adds the equivalent focal while pinching. Hidden only when
+ * the camera offers no zoom range at all.
  */
 @Composable
 private fun ZoomPill(
     stops: List<Float>,
+    stopFocalMm: List<Float>,
+    modeMaximum: Float,
     opticalStops: List<Float>,
     current: Float,
     zoomable: Boolean,
+    referenceEqFocalMm: Float,
     onSelect: (Float) -> Unit,
 ) {
-    if (stops.isEmpty()) return
-    val currentLabel = LensZoomPlan.stopLabel(current) + if (
-        opticalStops.any { abs(it - current) < 0.05f }
-    ) {
-        " · LENS"
-    } else {
-        " · DIGITAL"
+    val visible = stops.mapIndexedNotNull { index, stop ->
+        if (stop > modeMaximum + 0.01f) null else stop to (stopFocalMm.getOrNull(index) ?: 0f)
     }
+    if (visible.isEmpty()) return
+    val currentFocal = LensZoomPlan.focalLabel(referenceEqFocalMm * current)
+    val currentLabel = LensZoomPlan.stopLabel(current) +
+        (currentFocal?.let { " · $it" } ?: "") +
+        if (opticalStops.any { abs(it - current) < 0.05f }) " · LENS" else " · DIGITAL"
     Column(horizontalAlignment = Alignment.CenterHorizontally) {
         if (zoomable) {
             Text(
@@ -2108,7 +2115,7 @@ private fun ZoomPill(
                     .padding(horizontal = 10.dp, vertical = 3.dp),
             )
         }
-        if (stops.size < 2 && !zoomable) return@Column
+        if (visible.size < 2 && !zoomable) return@Column
         Row(
             modifier = Modifier
                 .clip(CircleShape)
@@ -2117,7 +2124,7 @@ private fun ZoomPill(
             horizontalArrangement = Arrangement.spacedBy(2.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            stops.forEach { stop ->
+            visible.forEach { (stop, focalMm) ->
                 val active = abs(stop - current) < 0.02f
                 Box(
                     modifier = Modifier
@@ -2128,7 +2135,7 @@ private fun ZoomPill(
                     contentAlignment = Alignment.Center,
                 ) {
                     Text(
-                        text = LensZoomPlan.stopLabel(stop),
+                        text = LensZoomPlan.focalLabel(focalMm) ?: LensZoomPlan.stopLabel(stop),
                         color = if (active) White else DimWhite,
                         fontFamily = FontFamily.Monospace,
                         style = MaterialTheme.typography.labelSmall,
