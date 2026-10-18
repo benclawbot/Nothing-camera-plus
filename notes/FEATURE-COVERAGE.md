@@ -120,6 +120,7 @@ Nothing community's own camera feedback threads (`nothing.community`).
 | Pinch zoom over device range | 🟡 | gestures + range clamp implemented; preview and saved still now share the same viewport |
 | Per-mode zoom caps (night 30x, slo-mo 2x, timelapse 10x) | 🟡 | CameraX modes are capped; Camera2 slow-motion/time-lapse gestures remain limited |
 | Focal-length labels (14/24/28/35mm…) | ✅ | Zoom chips label stops with their 35 mm-equivalent focal ("24mm") and the live readout shows ratio + mm; conversion uses the serving lens' focal and sensor size (43.27 mm frame — the original's zoom-slider basis). Device unverified |
+| Resolution-aware lens choice for digital zoom | 🟡 | `LensPlan` scores each reachable lens by the sensor pixels left after the crop (readout ÷ ratio²), so a mid-zoom request is served by cropping the telephoto slightly instead of the wide lens a lot; the bound lens is kept while it stays within half the best score. Unit-tested; device behaviour unverified |
 
 ## Video
 

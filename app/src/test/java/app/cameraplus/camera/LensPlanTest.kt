@@ -105,11 +105,39 @@ class LensPlanTest {
     }
 
     @Test
-    fun digitalZoomBetweenStaysOnTheCurrentCamera() {
+    fun digitalZoomPastTheTeleStopIsServedByTheTelephotoLens() {
+        // The fixture's 2x telephoto reaches 2x zoom of its own, so 3x sits in
+        // its digital range: cropping it 1.5x keeps 22 MP of its 50 MP sensor
+        // against 6 MP from cropping the main 3x. The lens with the most
+        // pixels over the view wins, which is what the stock camera does when
+        // its 2x button is held and zoomed past.
         val layout = LensPlan.build(nothingLike)
         val target = layout.targetFor(3f, currentCameraId = "0")
+        assertEquals("2", target.cameraId)
+        assertEquals(1.5f, target.zoomRatio, 1e-3f)
+        assertEquals(3f, target.displayedZoom, 1e-3f)
+        assertTrue(target.needsRebind)
+    }
+
+    @Test
+    fun digitalZoomInsideTheBoundLensRangeStaysOnTheCurrentCamera() {
+        // The telephoto's own range ends at 4x displayed, so 4.5x falls back
+        // to the main lens at 4.5x.
+        val layout = LensPlan.build(nothingLike)
+        val target = layout.targetFor(4.5f, currentCameraId = "0")
         assertEquals("0", target.cameraId)
-        assertEquals(3f, target.zoomRatio, 1e-3f)
+        assertEquals(4.5f, target.zoomRatio, 1e-3f)
+        assertFalse(target.needsRebind)
+    }
+
+    @Test
+    fun digitalZoomStaysOnTheBoundLensWhenItIsTheBestChoice() {
+        // Inside the main lens' optical range (below the 2x tele stop) the
+        // bound main camera keeps the request.
+        val layout = LensPlan.build(nothingLike)
+        val target = layout.targetFor(1.5f, currentCameraId = "0")
+        assertEquals("0", target.cameraId)
+        assertEquals(1.5f, target.zoomRatio, 1e-3f)
         assertFalse(target.needsRebind)
     }
 
@@ -204,5 +232,76 @@ class LensPlanTest {
         // ~26 mm-equivalent main camera: 5.9 mm on a 1/1.5"-class sensor.
         val eq = LensPlan.eqFocalMm(5.9f, 7.6f, 5.7f)
         assertTrue("eq was $eq", eq in 25f..28f)
+    }
+
+    /**
+     * Main and tele share a sensor size and pixel count, so the 2x lens
+     * cropped a little keeps far more pixels over the same view than the main
+     * cropped a lot — the "crop the tele slightly, not the wide a lot" rule.
+     */
+    private val equalSensors = listOf(
+        LensSpec("main", listOf(5.9f), 7.6f, 5.7f, 50_000_000L, 1f, 10f),
+        LensSpec("tele", listOf(11.8f), 7.6f, 5.7f, 50_000_000L, 1f, 10f),
+        LensSpec("uw", listOf(2.4f), 5.6f, 4.2f, 12_000_000L, 1f, 10f),
+    )
+
+    @Test
+    fun digitalZoomLeavesTheUltrawideForTheLensThatKeepsMorePixels() {
+        val layout = LensPlan.build(equalSensors)
+        // From 0.6x, 2.5x served by the ultrawide would be a 6.25x crop of a
+        // 12 MP sensor (0.3 MP left); the 2x tele cropped to 1.25x keeps
+        // 32 MP, and the main 8 MP. The tele wins on resolution.
+        val target = layout.targetFor(2.5f, currentCameraId = "uw")
+        assertEquals("tele", target.cameraId)
+        assertEquals(1.25f, target.zoomRatio, 1e-3f)
+        assertEquals(2.5f, target.displayedZoom, 1e-3f)
+        assertTrue(target.needsRebind)
+    }
+
+    @Test
+    fun digitalZoomBetweenStopsKeepsALensThatResolvesHalfTheDetail() {
+        // Cropping the 30 MP main 2.4x leaves 5.2 MP; not cropping the 14 MP
+        // 2x tele leaves 9.7 MP. That is within the two-to-one margin, so the
+        // bound lens keeps the shot and no rebind happens.
+        val layout = LensPlan.build(
+            listOf(
+                LensSpec("main", listOf(5.9f), 7.6f, 5.7f, 30_000_000L, 1f, 10f),
+                LensSpec("tele", listOf(11.8f), 7.6f, 5.7f, 14_000_000L, 1f, 10f),
+            ),
+        )
+        val target = layout.targetFor(2.4f, currentCameraId = "main")
+        assertEquals("main", target.cameraId)
+        assertFalse(target.needsRebind)
+    }
+
+    @Test
+    fun digitalZoomBetweenStopsYieldsWhenStayingWouldLoseMostOfTheDetail() {
+        // The same crop of the 30 MP main (5.2 MP) against a 18 MP 2x tele
+        // (12.5 MP) is worse than the two-to-one margin, so the tele takes it.
+        val layout = LensPlan.build(
+            listOf(
+                LensSpec("main", listOf(5.9f), 7.6f, 5.7f, 30_000_000L, 1f, 10f),
+                LensSpec("tele", listOf(11.8f), 7.6f, 5.7f, 18_000_000L, 1f, 10f),
+            ),
+        )
+        val target = layout.targetFor(2.4f, currentCameraId = "main")
+        assertEquals("tele", target.cameraId)
+        assertEquals(1.2f, target.zoomRatio, 1e-3f)
+        assertTrue(target.needsRebind)
+    }
+
+    @Test
+    fun unreportedSensorSizesFallBackToTheWidestLens() {
+        // No pixel counts to compare: the old rule (least crop) still applies,
+        // rather than every lens scoring zero and picking an arbitrary one.
+        val layout = LensPlan.build(
+            listOf(
+                LensSpec("main", listOf(5.9f), 7.6f, 5.7f, 0L, 1f, 10f),
+                LensSpec("uw", listOf(2.4f), 5.6f, 4.2f, 0L, 1f, 10f),
+            ),
+        )
+        val target = layout.targetFor(3f, currentCameraId = null)
+        assertEquals("uw", target.cameraId)
+        assertEquals(7.5f, target.zoomRatio, 1e-3f)
     }
 }

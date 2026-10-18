@@ -117,6 +117,7 @@ A clean-room tracking autofocus for both photo modes and video:
 ### Zoom & lenses
 
 - Zoom stops derived from lenses exposed by the public CameraX/Camera2 API. On devices exposing only one public back camera, stops above 1x are digital crops; hidden OEM physical lenses are not claimed as available.
+- Lens selection at a digital-zoom request is **resolution-aware**: the lens that keeps the most sensor pixels over the requested view wins (crop ratio squared against sensor readout), so 2.5x is served by cropping a 50 MP 2x telephoto 1.25x rather than cropping a 12 MP ultrawide 4.2x. The bound lens keeps the request while it resolves at least half the pixels the best alternative would, so ordinary pinch-zoom does not rebind for a marginal gain.
 - **Default focal** setting (24 / 28 / 35 mm equivalent, applied to whatever lens the session binds), and a tap on the *active* zoom chip steps through 28 mm → 35 mm → back to the lens's own wide stop, the way the stock app's 1x tap does.
 - Pinch-to-zoom with honest hardware-range clamping and a shared CameraX capture viewport, so the framing shown is the crop saved to the file; per-mode caps still apply.
 - Zoom chips are labelled with their 35 mm-equivalent focal length ("24mm"), computed from the serving lens' focal length and sensor size; the live readout keeps the ratio and adds the equivalent focal while pinching.

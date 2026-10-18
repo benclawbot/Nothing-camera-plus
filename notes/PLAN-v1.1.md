@@ -322,3 +322,15 @@
   viewfinder surfaces and the sheet's preference object are joined, so no
   preference can be dropped by one caller building the object by hand. 288 JVM
   tests pass (10 new); APK compiles. Device verification pending.
+- 2026-10-18: image- and zoom-quality pass, part 1 — zoom lens choice.
+  `LensPlan` now scores every lens that can reach a requested zoom by the
+  sensor pixels left over that view (readout divided by the crop ratio
+  squared) instead of taking the widest lens that still reaches. At 2.5x that
+  means cropping a 50 MP 2x telephoto 1.25x (32 MP of real pixels) rather than
+  cropping a 12 MP ultrawide 4.2x (0.3 MP), and pinching back down from the
+  telephoto lands on the main lens rather than the ultrawide. The bound lens
+  keeps a digital-zoom request while it resolves at least half the pixels the
+  best alternative would, so ordinary pinch-zoom does not rebind for a
+  marginal gain, and a camera that reports no sensor size falls back to the
+  old least-crop rule. 294 JVM tests pass (6 new); APK compiles. Device
+  verification pending.

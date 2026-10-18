@@ -29,6 +29,12 @@ data class Lens(
     val eqFocalMm: Float,
     val minZoom: Float,
     val maxZoom: Float,
+    /**
+     * Sensor pixels behind this lens, used to compare how much real detail a
+     * digital crop keeps. Zero means the platform did not report a sensor
+     * size, in which case the lens is never favoured on resolution grounds.
+     */
+    val pixelCount: Long = 0L,
 ) {
     val minDisplayedZoom: Float get() = baseStop * minZoom
     val maxDisplayedZoom: Float get() = baseStop * maxZoom
@@ -85,11 +91,18 @@ data class LensLayout(
     }
 
     /**
-     * Resolves a requested displayed zoom onto a camera and ratio. The widest
-     * camera that can still reach the requested zoom wins (least crop), and
-     * the camera that is already bound wins ties, so normal zooming never
-     * forces a session rebind. Values outside every lens' range clamp to the
-     * nearest reachable extreme rather than failing.
+     * Resolves a requested displayed zoom onto a camera and ratio.
+     *
+     * A request that lands on a physical lens' own stop takes that lens at its
+     * native ratio — the optical path. Otherwise the lens that keeps the most
+     * sensor pixels over the requested view wins: cropping a 50 MP main sensor
+     * 2.5x leaves four times the pixels of cropping a 12 MP ultrawide 4.2x,
+     * and that difference is what digital-zoom quality is made of. The camera
+     * that is already bound is kept when it still resolves at least
+     * [KEEP_CURRENT_LENS_FRACTION] of what the best alternative would, so
+     * ordinary pinch-zoom never forces a session rebind for a marginal gain.
+     * Values outside every lens' range clamp to the nearest reachable extreme
+     * rather than failing.
      */
     fun targetFor(displayed: Float, currentCameraId: String?): LensTarget {
         val request = clampDisplayed(displayed)
@@ -99,14 +112,14 @@ data class LensLayout(
         // already-bound camera wins any tie, so nothing rebinds needlessly.
         val optical = lenses
             .filter { abs(it.baseStop - request) < OPTICAL_TOLERANCE }
-            .minWithOrNull(preference(currentCameraId))
-        // Between lens stops it is digital zoom: stay on the bound camera
-        // when it can do it, else take the widest lens that still reaches.
+            .minWithOrNull(preference(currentCameraId, request))
+        // Between lens stops it is digital zoom: resolve which lens keeps the
+        // most real pixels over the requested view.
         val reachable = lenses.filter { lens ->
             val ratio = request / lens.baseStop
             ratio >= lens.minZoom - EPSILON && ratio <= lens.maxZoom + EPSILON
         }
-        val chosen = optical ?: reachable.minWithOrNull(preference(currentCameraId))
+        val chosen = optical ?: selectReachable(reachable, request, currentCameraId)
             ?: lenses.maxBy { it.maxDisplayedZoom }
         val ratio = (request / chosen.baseStop).coerceIn(chosen.minZoom, chosen.maxZoom)
         return LensTarget(
@@ -122,18 +135,72 @@ data class LensLayout(
         private const val OPTICAL_TOLERANCE = 0.05f
 
         /**
-         * Ordering used when several lenses can serve a request: the camera
-         * that is already bound first (no needless rebind), then the widest
-         * lens (least crop).
-         *
-         * Written explicitly so the priority is unambiguous: current camera
-         * first, then the smallest (widest) base stop.
+         * The bound camera keeps a digital-zoom request while it resolves at
+         * least this share of the pixels the best alternative would, so a
+         * rebind only happens when staying would lose more than half the
+         * detail (about 0.7x the linear resolution).
          */
-        private fun preference(currentCameraId: String?): Comparator<Lens> =
+        private const val KEEP_CURRENT_LENS_FRACTION = 0.5
+
+        /**
+         * Picks the lens for a digital-zoom request. The most sensor pixels
+         * over the requested view wins; the bound camera keeps the request as
+         * long as it stays within [KEEP_CURRENT_LENS_FRACTION] of that best
+         * score. When no sensor size is known for any candidate there is
+         * nothing to compare, so the widest lens (the smallest crop) wins.
+         */
+        private fun selectReachable(
+            reachable: List<Lens>,
+            request: Float,
+            currentCameraId: String?,
+        ): Lens? {
+            if (reachable.isEmpty()) return null
+            val best = reachable.maxByOrNull { effectivePixels(it, request) } ?: return null
+            val bestScore = effectivePixels(best, request)
+            if (bestScore <= 0.0) return reachable.minByOrNull { it.baseStop }
+            val current = reachable.firstOrNull { it.cameraId == currentCameraId } ?: return best
+            val currentScore = effectivePixels(current, request)
+            return if (currentScore >= bestScore * KEEP_CURRENT_LENS_FRACTION) current else best
+        }
+
+        /**
+         * Sensor pixels left over the requested view: the sensor readout
+         * divided by the crop ratio squared. Only relative values matter, and
+         * an unknown sensor size scores zero so it never wins a comparison it
+         * cannot support.
+         */
+        private fun effectivePixels(lens: Lens, request: Float): Double {
+            if (lens.pixelCount <= 0L) return 0.0
+            val ratio = (request / lens.baseStop).toDouble().coerceAtLeast(EPSILON.toDouble())
+            return lens.pixelCount / (ratio * ratio)
+        }
+
+        /**
+         * Ordering used when several lenses can serve a request: the camera
+         * that is already bound first (no needless rebind), then the lens that
+         * keeps the most pixels over the requested view, then the smallest
+         * crop.
+         *
+         * Written explicitly so the priority is unambiguous.
+         */
+        private fun preference(currentCameraId: String?, request: Float): Comparator<Lens> =
             Comparator { a, b ->
                 val aCurrent = if (a.cameraId == currentCameraId) 0 else 1
                 val bCurrent = if (b.cameraId == currentCameraId) 0 else 1
-                if (aCurrent != bCurrent) aCurrent - bCurrent else a.baseStop.compareTo(b.baseStop)
+                when {
+                    aCurrent != bCurrent -> aCurrent - bCurrent
+                    else -> {
+                        val aScore = effectivePixels(a, request)
+                        val bScore = effectivePixels(b, request)
+                        if (aScore != bScore) {
+                            bScore.compareTo(aScore)
+                        } else {
+                            val aRatio = request / a.baseStop
+                            val bRatio = request / b.baseStop
+                            aRatio.compareTo(bRatio)
+                        }
+                    }
+                }
             }
     }
 }
@@ -188,6 +255,7 @@ object LensPlan {
                 eqFocalMm = eqFocalMm(representative, spec.sensorWidthMm, spec.sensorHeightMm),
                 minZoom = spec.minZoom.coerceAtLeast(0.01f),
                 maxZoom = spec.maxZoom.coerceAtLeast(spec.minZoom.coerceAtLeast(0.01f)),
+                pixelCount = spec.pixelCount,
             )
         }.sortedBy { it.baseStop }
 
