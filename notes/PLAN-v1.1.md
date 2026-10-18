@@ -169,3 +169,13 @@
   `CameraUIContext`); Camera+ keeps the controls portrait-locked and now changes Preview's
   target rotation/crop dynamically while saving the shutter-time pose. The latest landscape
   viewfinder appearance and physical panorama sweep still need confirmation.
+- 2026-10-18: preview framing rework (supersedes the dynamic per-pose preview rotation
+  described above). Preview and VideoCapture target rotation are pinned to
+  `Surface.ROTATION_0` and the shared `ViewPort` stays portrait, matching the
+  portrait-locked activity: the device pose now affects only the saved still, never the
+  preview surface. The viewfinder is sized to the selected capture ratio (FILL_CENTER)
+  instead of filling the screen with a FIT viewport, and the guides, level line,
+  stabilization-crop overlay, screen flash and tap handling all share that same frame;
+  CameraX now binds after the first layout so the surface starts valid. Device re-test
+  pending: landscape/upside-down poses, preview-to-file framing correlation, and the
+  physical panorama sweep. 213 JVM tests pass; APK compiles.

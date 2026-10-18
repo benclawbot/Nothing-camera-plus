@@ -159,7 +159,6 @@ class CameraSession(
     private var imageAnalysis: ImageAnalysis? = null
     private var panoramaAnalysis: ImageAnalysis? = null
     private var panoramaAnalyzer: PanoramaStreamAnalyzer? = null
-    private var previewUseCase: Preview? = null
     private var videoSnapshotSupported = false
     private var boundPreviewView: PreviewView? = null
     private var onZslChanged: (Boolean) -> Unit = {}
@@ -191,15 +190,9 @@ class CameraSession(
             val nextPose = CaptureOrientation.roundPoseDegrees(orientation)
             if (nextPose == poseDegrees) return
             poseDegrees = nextPose
-            val rotation = surfaceRotationForPose(nextPose)
             if (Log.isLoggable(ORIENTATION_TAG, Log.DEBUG)) {
-                Log.d(ORIENTATION_TAG, "pose=$nextPose previewTargetRotation=$rotation")
+                Log.d(ORIENTATION_TAG, "pose=$nextPose; saved captures follow this pose")
             }
-            previewUseCase?.targetRotation = rotation
-            videoCapture?.targetRotation = rotation
-            // Rotate the camera content in place. The shared crop remains
-            // tied to the pinned capture target, while PreviewView applies
-            // this pose rotation inside the portrait-locked UI.
         }
     }
     private var mode = SessionMode.PHOTO
@@ -306,7 +299,6 @@ class CameraSession(
         videoCapture = null
         imageAnalysis?.clearAnalyzer()
         imageAnalysis = null
-        previewUseCase = null
         panoramaAnalysis = null
         panoramaAnalyzer = null
         shutterSound?.release()
@@ -1594,11 +1586,10 @@ class CameraSession(
         }
 
         val preview = Preview.Builder()
-            .setTargetRotation(surfaceRotationForPose(poseDegrees))
+            .setTargetRotation(Surface.ROTATION_0)
             .build().also {
                 it.setSurfaceProvider(previewView.surfaceProvider)
             }
-        previewUseCase = preview
         val baseSelector = selectorForCamera(targetId)
         val desiredExtension = if (mode == SessionMode.VIDEO) {
             ExtensionMode.NONE
@@ -1657,7 +1648,7 @@ class CameraSession(
                 }
             val videoBuilder = VideoCapture.Builder(recorder)
                 .setVideoStabilizationEnabled(stabilizationEnabled)
-                .setTargetRotation(surfaceRotationForPose(poseDegrees))
+                .setTargetRotation(Surface.ROTATION_0)
                 .setTargetFrameRate(Range(videoFrameRate.fps, videoFrameRate.fps))
                 .setMirrorMode(
                     if (mirrorCaptureEnabled) MirrorMode.MIRROR_MODE_ON_FRONT_ONLY
@@ -1884,15 +1875,12 @@ class CameraSession(
         } else {
             Rational(photoAspectRatio.numerator, photoAspectRatio.denominator)
         }
-        // The selected ratio is expressed landscape-first. Rotate the viewport
-        // ratio with the phone so the fullscreen UI can show a correctly
-        // oriented, undistorted crop in either pose.
-        val viewportAspect = if (poseDegrees % 180 == 0) {
-            Rational(baseAspect.denominator, baseAspect.numerator)
-        } else {
-            baseAspect
-        }
-        val viewPort = ViewPort.Builder(viewportAspect, surfaceRotationForPose(poseDegrees))
+        // Ratios are stored landscape-first (4:3 stills, 16:9 video), while
+        // this activity and its viewfinder stay portrait-locked. Give CameraX
+        // the corresponding portrait viewport ratio; device pose only affects
+        // the saved still, never the preview surface.
+        val portraitAspect = Rational(baseAspect.denominator, baseAspect.numerator)
+        val viewPort = ViewPort.Builder(portraitAspect, Surface.ROTATION_0)
             .setScaleType(ViewPort.FILL_CENTER)
             .build()
         return UseCaseGroup.Builder()
@@ -1902,13 +1890,6 @@ class CameraSession(
                 if (lookEnabled) addEffect(ensureLookEffect())
             }
             .build()
-    }
-
-    private fun surfaceRotationForPose(pose: Int): Int = when (((pose % 360) + 360) % 360) {
-        90 -> Surface.ROTATION_90
-        180 -> Surface.ROTATION_180
-        270 -> Surface.ROTATION_270
-        else -> Surface.ROTATION_0
     }
 
     private fun selectorForCamera(cameraId: String?): CameraSelector {

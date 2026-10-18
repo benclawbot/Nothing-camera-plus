@@ -35,6 +35,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.WindowInsetsSides
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -84,6 +85,7 @@ import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -198,14 +200,13 @@ fun CameraScreen() {
     val session = remember { CameraSession(context, lifecycleOwner) }
     val previewView = remember {
         PreviewView(context).apply {
-            // CameraSession binds a ViewPort matching the actual still/video
-            // crop. Fit that viewport inside the full-screen viewfinder so
-            // the black letterbox is honest, rather than filling it with a
-            // tighter crop than the saved frame.
-            scaleType = PreviewView.ScaleType.FIT_CENTER
+            // The surface is sized to the selected crop ratio below, so fill
+            // does not stretch or crop the CameraX viewport.
+            scaleType = PreviewView.ScaleType.FILL_CENTER
         }
     }
     val camera2TextureView = remember(context) { TextureView(context) }
+    var previewViewReady by remember { mutableStateOf(false) }
     val sensorManager = remember(context) {
         context.getSystemService(Context.SENSOR_SERVICE) as SensorManager
     }
@@ -303,6 +304,13 @@ fun CameraScreen() {
     var videoQuality by remember { mutableStateOf(capturePreferences.videoQuality) }
     var videoFrameRate by remember { mutableStateOf(capturePreferences.videoFrameRate) }
     var photoAspectRatio by remember { mutableStateOf(capturePreferences.photoAspectRatio) }
+    val previewAspectRatio = if (
+        mode == CameraMode.VIDEO || mode == CameraMode.SLOW_MOTION || mode == CameraMode.TIME_LAPSE
+    ) {
+        9f / 16f
+    } else {
+        photoAspectRatio.denominator.toFloat() / photoAspectRatio.numerator.toFloat()
+    }
     var photoResolution by remember { mutableStateOf(capturePreferences.photoResolution) }
     var photoHdrEnabled by remember { mutableStateOf(capturePreferences.photoHdrEnabled) }
     var mirrorCapture by remember { mutableStateOf(capturePreferences.mirrorCapture) }
@@ -549,12 +557,15 @@ fun CameraScreen() {
     }
 
     DisposableEffect(lifecycleOwner) {
-        bindCameraX()
         onDispose {
             session.unbind()
             screenFlashView.setScreenFlashWindow(null)
             Thread { camera2Recorder.close() }.start()
         }
+    }
+
+    LaunchedEffect(previewViewReady) {
+        if (previewViewReady) bindCameraX()
     }
 
     // Keep the viewfinder look in step with the processing intent (M3.3).
@@ -1112,20 +1123,27 @@ fun CameraScreen() {
             .fillMaxSize()
             .background(Black),
     ) {
+        val previewFrameModifier = Modifier
+            .fillMaxWidth()
+            .aspectRatio(previewAspectRatio)
+            .align(Alignment.TopCenter)
+            .offset(y = 100.dp)
         if (mode.usesCamera2Recorder && camera2PreviewVisible) {
             AndroidView(
                 factory = { camera2TextureView },
-                modifier = Modifier.fillMaxSize(),
+                modifier = previewFrameModifier,
             )
         } else {
             AndroidView(
                 factory = { previewView },
-                modifier = Modifier.fillMaxSize(),
+                modifier = previewFrameModifier.onGloballyPositioned { coordinates ->
+                    previewViewReady = coordinates.size.width > 0 && coordinates.size.height > 0
+                },
             )
         }
         AndroidView(
             factory = { screenFlashView },
-            modifier = Modifier.fillMaxSize(),
+            modifier = previewFrameModifier,
         )
 
         if (mode == CameraMode.QR) {
@@ -1151,11 +1169,11 @@ fun CameraScreen() {
 
         GuideOverlay(
             guides = guides,
-            modifier = Modifier.fillMaxSize(),
+            modifier = previewFrameModifier,
         )
         LevelLine(
             rollDegrees = roll,
-            modifier = Modifier.fillMaxSize(),
+            modifier = previewFrameModifier,
         )
 
         if (mode == CameraMode.PANORAMA) {
@@ -1227,7 +1245,7 @@ fun CameraScreen() {
             StabilizationCropOverlay(
                 cropFraction = crop,
                 label = "STABILIZED −${(crop * 100f).roundToInt()}%",
-                modifier = Modifier.fillMaxSize(),
+                modifier = previewFrameModifier,
             )
         }
 
@@ -1236,7 +1254,7 @@ fun CameraScreen() {
         // makes a decoded web link appear to do nothing.
         if (!mode.usesCamera2Recorder && mode != CameraMode.QR) Box(
             modifier = Modifier
-                .fillMaxSize()
+                .then(previewFrameModifier)
                 .pointerInput(Unit) {
                     detectTapGestures(
                         onTap = { offset ->
