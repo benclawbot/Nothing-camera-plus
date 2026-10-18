@@ -65,6 +65,9 @@ Nothing community's own camera feedback threads (`nothing.community`).
 | Exposure bracketing (3 or 5 shots, ±2 EV) | Open Camera; Nothing forum bracketing suggestion | Implemented; device verification pending |
 | Ghost image / onion skin of the last shot | Open Camera | Implemented; device verification pending |
 | RAW ONLY (DNG without a companion JPEG) | Open Camera | Implemented; device verification pending |
+| Default focal (24/28/35 mm) and 1x tap cycling | Nothing forum request ("option to set 24,28 or 35mm as default focal length") | Implemented; device verification pending |
+| Self-timer up to 60 s, shot series and voice countdown | Open Camera | Implemented; device verification pending |
+| Barcode types beyond QR (2D matrix, product codes) | GrapheneOS Secure Camera | Implemented; device verification pending |
 
 ---
 

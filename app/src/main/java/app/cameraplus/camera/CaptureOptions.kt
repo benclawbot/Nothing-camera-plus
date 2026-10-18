@@ -9,7 +9,10 @@ import java.util.Locale
 enum class SelfTimer(val label: String, val seconds: Int) {
     OFF("OFF", 0),
     THREE_SECONDS("3s", 3),
-    TEN_SECONDS("10s", 10);
+    TEN_SECONDS("10s", 10),
+    TWENTY_SECONDS("20s", 20),
+    THIRTY_SECONDS("30s", 30),
+    SIXTY_SECONDS("60s", 60);
 
     fun next(): SelfTimer = entries[(ordinal + 1) % entries.size]
 

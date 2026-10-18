@@ -9,16 +9,16 @@ import org.junit.Test
 class CaptureOptionsTest {
 
     @Test
-    fun selfTimerCyclesThroughOffThreeAndTen() {
+    fun selfTimerCyclesThroughEveryDelayAndBackToOff() {
+        val order = SelfTimer.entries
         var timer = SelfTimer.OFF
         assertFalse(timer.enabled)
-        timer = timer.next()
-        assertEquals(SelfTimer.THREE_SECONDS, timer)
-        assertTrue(timer.enabled)
-        timer = timer.next()
-        assertEquals(SelfTimer.TEN_SECONDS, timer)
-        timer = timer.next()
-        assertEquals(SelfTimer.OFF, timer)
+        for (expected in order.drop(1) + SelfTimer.OFF) {
+            timer = timer.next()
+            assertEquals(expected, timer)
+        }
+        assertEquals(60, SelfTimer.SIXTY_SECONDS.seconds)
+        assertTrue(SelfTimer.TWENTY_SECONDS.enabled)
     }
 
     @Test

@@ -234,6 +234,7 @@ class CameraSession(
     private var macroEnabled = false
     private var antiBandingMode = AntiBanding.AUTO
     private var availableAntiBandingModes: List<AntiBanding> = listOf(AntiBanding.AUTO)
+    private var barcodeScanning = BarcodeScanning.QR_ONLY
     private var zeroShutterLagSupported = false
     private var appliedCaptureMode = ImageCapture.CAPTURE_MODE_MINIMIZE_LATENCY
 
@@ -999,6 +1000,16 @@ class CameraSession(
 
     /** The anti-banding mode the session is currently asking for. */
     fun currentAntiBanding(): AntiBanding = antiBandingMode
+
+    /**
+     * Code families QR mode looks for. The analyzer is built with the session,
+     * so a change rebinds — and only QR mode needs to.
+     */
+    fun setBarcodeScanning(scanning: BarcodeScanning, onError: (Exception) -> Unit = {}) {
+        if (barcodeScanning == scanning) return
+        barcodeScanning = scanning
+        if (mode == SessionMode.QR) rebind(onError)
+    }
 
     /**
      * The Camera2 anti-banding code to request, or null for AUTO — the
@@ -1956,9 +1967,13 @@ class CameraSession(
             val built = ImageAnalysis.Builder()
                 .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
                 .build()
-            built.setAnalyzer(qrExecutor, QrCodeAnalyzer { value ->
-                mainExecutor.execute { onQrCode(value) }
-            })
+            built.setAnalyzer(
+                qrExecutor,
+                QrCodeAnalyzer(
+                    onResult = { value -> mainExecutor.execute { onQrCode(value) } },
+                    scanning = barcodeScanning,
+                ),
+            )
             analysis = built
             useCases += built
         } else if (mode == SessionMode.PANORAMA) {

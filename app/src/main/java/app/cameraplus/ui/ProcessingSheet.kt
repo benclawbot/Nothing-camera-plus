@@ -37,7 +37,9 @@ import app.cameraplus.settings.WatermarkOptions
 import app.cameraplus.settings.CapturePreferences
 import app.cameraplus.camera.FlashChoice
 import app.cameraplus.camera.AntiBanding
+import app.cameraplus.camera.BarcodeScanning
 import app.cameraplus.camera.ExposureBracket
+import app.cameraplus.camera.FocalPresets
 import app.cameraplus.camera.FocusTimeout
 import app.cameraplus.camera.PhotoAspectRatio
 import app.cameraplus.camera.PhotoResolution
@@ -182,6 +184,21 @@ fun ProcessingSheet(
                     SettingsToggle("KEEP EXPOSURE", capturePreferences.keepExposure) {
                         onCapturePreferencesChange(capturePreferences.copy(keepExposure = !capturePreferences.keepExposure))
                     }
+                    SettingsChoices("DEFAULT FOCAL", FocalPresets.labelFor(capturePreferences.defaultFocalMm),
+                        listOf(FocalPresets.AUTO_LABEL) + FocalPresets.MILLIMETRES.map { FocalPresets.labelFor(it) }) { value ->
+                        onCapturePreferencesChange(
+                            capturePreferences.copy(defaultFocalMm = FocalPresets.fromLabel(value)),
+                        )
+                    }
+                    SettingsChoices("TIMER SHOTS", capturePreferences.selfTimerShots.toString(),
+                        listOf("1", "2", "3", "5")) { value ->
+                        value.toIntOrNull()?.let {
+                            onCapturePreferencesChange(capturePreferences.copy(selfTimerShots = it))
+                        }
+                    }
+                    SettingsToggle("VOICE COUNTDOWN", capturePreferences.voiceCountdown) {
+                        onCapturePreferencesChange(capturePreferences.copy(voiceCountdown = !capturePreferences.voiceCountdown))
+                    }
                     SettingsChoices("ANTI-FLICKER", capturePreferences.antiBanding.label,
                         availableAntiBanding.map { it.label }) { value ->
                         AntiBanding.entries.firstOrNull { it.label == value }?.let {
@@ -280,9 +297,14 @@ fun ProcessingSheet(
                         style = MaterialTheme.typography.labelSmall,
                         modifier = Modifier.padding(top = 8.dp),
                     )
+                    SettingsChoices("BARCODE TYPES", capturePreferences.barcodeScanning.label,
+                        BarcodeScanning.entries.map { it.label }) { value ->
+                        BarcodeScanning.entries.firstOrNull { it.label == value }?.let {
+                            onCapturePreferencesChange(capturePreferences.copy(barcodeScanning = it))
+                        }
+                    }
                     SettingsChoices(
-                        "GALLERY APP",
-                        galleryApps.firstOrNull { it.packageName == preferredGalleryPackage }?.label
+                        "GALLERY APP",                        galleryApps.firstOrNull { it.packageName == preferredGalleryPackage }?.label
                             ?: AUTOMATIC_GALLERY,
                         buildList {
                             add(AUTOMATIC_GALLERY)

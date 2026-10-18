@@ -4,15 +4,19 @@ import androidx.camera.core.ImageAnalysis
 import androidx.camera.core.ImageProxy
 
 /**
- * QR-only CameraX analyzer using the Y luma plane (no image conversion,
+ * Barcode CameraX analyzer using the Y luma plane (no image conversion,
  * network request, or cloud service). It reports each code once until it has
  * disappeared for a short run of frames, then permits a subsequent scan.
+ *
+ * [scanning] picks the code families: QR only (the original's behaviour), the
+ * matrix codes, or every format ZXing understands.
  */
 class QrCodeAnalyzer(
     private val onResult: (String) -> Unit,
+    scanning: BarcodeScanning = BarcodeScanning.QR_ONLY,
 ) : ImageAnalysis.Analyzer {
 
-    private val decoder = QrDecoder()
+    private val decoder = QrDecoder(BarcodeFormats.formatsFor(scanning))
     private var lastResult: String? = null
     private var missingFrames = 0
 

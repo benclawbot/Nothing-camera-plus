@@ -287,3 +287,16 @@
   holds the last shot over the viewfinder at 38% opacity, decoded off the main
   thread with a power-of-two downsample (`ghostSampleSize`, unit-tested). 263
   JVM tests pass (10 new); APK compiles. Device verification pending.
+- 2026-10-18: shooting flow — default focal, timer extras, barcode types.
+  `FocalPresets` (pure, unit-tested) turns 24/28/35 mm presets into displayed
+  zoom ratios against the reference lens, labels them for the settings sheet
+  and defines the 1x-tap cycle (28 -> 35 -> the lens's own wide stop);
+  tapping the active zoom chip steps it and makes the choice the new default.
+  The self-timer gained 20/30/60 s, a TIMER SHOTS series of 1-5 frames fired
+  from one countdown, and an optional `VoiceCountdown` (TextToSpeech, built
+  only while the preference is on). QR mode's ZXing decoder now takes a
+  format list, and `BarcodeScanning` widens the search from QR only to the 2D
+  matrix codes or every format ZXing knows (`BarcodeFormats`, unit-tested).
+  `capturePreferences` became live state so settings read back what the sheet
+  just changed. 273 JVM tests pass (10 new); APK compiles. Device verification
+  pending.

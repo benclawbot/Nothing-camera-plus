@@ -2,8 +2,10 @@ package app.cameraplus.settings
 
 import android.content.Context
 import app.cameraplus.camera.AntiBanding
+import app.cameraplus.camera.BarcodeScanning
 import app.cameraplus.camera.ExposureBracket
 import app.cameraplus.camera.FlashChoice
+import app.cameraplus.camera.FocalPresets
 import app.cameraplus.camera.FocusTimeout
 import app.cameraplus.camera.PhotoAspectRatio
 import app.cameraplus.camera.PhotoResolution
@@ -43,6 +45,12 @@ data class CapturePreferences(
     val exposureBracket: ExposureBracket = ExposureBracket.OFF,
     /** Onion skin: hold the last shot over the viewfinder at low opacity. */
     val ghostImage: Boolean = false,
+    /** 35 mm-equivalent default focal (0 = the lens's own wide stop). */
+    val defaultFocalMm: Int = 0,
+    /** Shots the self-timer fires once its countdown ends (1-5). */
+    val selfTimerShots: Int = 1,
+    val voiceCountdown: Boolean = false,
+    val barcodeScanning: BarcodeScanning = BarcodeScanning.QR_ONLY,
 )
 
 class CapturePreferencesStore(context: Context) {
@@ -79,6 +87,14 @@ class CapturePreferencesStore(context: Context) {
         focusTimeout = enumValue(prefs.getString(KEY_FOCUS_TIMEOUT, null), FocusTimeout.OFF),
         exposureBracket = enumValue(prefs.getString(KEY_BRACKET, null), ExposureBracket.OFF),
         ghostImage = prefs.getBoolean(KEY_GHOST, false),
+        defaultFocalMm = prefs.getInt(KEY_DEFAULT_FOCAL, 0)
+            .takeIf { it in FOCAL_PRESETS } ?: 0,
+        selfTimerShots = prefs.getInt(KEY_TIMER_SHOTS, 1).coerceIn(1, MAX_TIMER_SHOTS),
+        voiceCountdown = prefs.getBoolean(KEY_VOICE_COUNTDOWN, false),
+        barcodeScanning = enumValue(
+            prefs.getString(KEY_BARCODE, null),
+            BarcodeScanning.QR_ONLY,
+        ),
     )
 
     /** Persists only the tracking toggle; the rest of the sheet is untouched. */
@@ -137,6 +153,10 @@ class CapturePreferencesStore(context: Context) {
             .putString(KEY_FOCUS_TIMEOUT, options.focusTimeout.name)
             .putString(KEY_BRACKET, options.exposureBracket.name)
             .putBoolean(KEY_GHOST, options.ghostImage)
+            .putInt(KEY_DEFAULT_FOCAL, options.defaultFocalMm.takeIf { it in FOCAL_PRESETS } ?: 0)
+            .putInt(KEY_TIMER_SHOTS, options.selfTimerShots.coerceIn(1, MAX_TIMER_SHOTS))
+            .putBoolean(KEY_VOICE_COUNTDOWN, options.voiceCountdown)
+            .putString(KEY_BARCODE, options.barcodeScanning.name)
             .apply()
     }
 
@@ -170,7 +190,17 @@ class CapturePreferencesStore(context: Context) {
         const val KEY_FOCUS_TIMEOUT = "focus_timeout"
         const val KEY_BRACKET = "exposure_bracket"
         const val KEY_GHOST = "ghost_image"
+        const val KEY_DEFAULT_FOCAL = "default_focal_mm"
+        const val KEY_TIMER_SHOTS = "self_timer_shots"
+        const val KEY_VOICE_COUNTDOWN = "voice_countdown"
+        const val KEY_BARCODE = "barcode_scanning"
         val TIME_LAPSE_SPEEDS = setOf(15, 30, 60, 120, 240, 480, 960)
         val SLOW_MOTION_RATES = setOf(120, 240, 480)
+
+        /** Focal presets the setting accepts, plus 0 for the lens's own 1x. */
+        val FOCAL_PRESETS = setOf(0) + FocalPresets.MILLIMETRES
+
+        /** Upper bound for a self-timer series. */
+        const val MAX_TIMER_SHOTS = 5
     }
 }

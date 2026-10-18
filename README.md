@@ -25,6 +25,9 @@ Current release: **v1.2.0** (`versionCode 5`), debug-signed, `minSdk 33` (Androi
 | Exposure bracketing | Implemented; device verification pending |
 | Ghost image (onion skin) | Implemented; device verification pending |
 | RAW ONLY mode | Implemented; device verification pending |
+| Default focal + 1x tap cycling | Implemented; device verification pending |
+| Self-timer series + voice countdown | Implemented; device verification pending |
+| Barcode type selection | Implemented; device verification pending |
 | Subject tracking (photo + video) | Done, device-verified (added in v1.2.0) |
 | Launcher shortcuts | Implemented; device verification pending |
 | Continuous shot (hold shutter) | Implemented; device verification pending |
@@ -58,7 +61,7 @@ The carousel ships eleven entries: **PHOTO, PORTRAIT, BEAUTY, NIGHT, PANORAMA, M
 - **NIGHT** — CameraX NIGHT extension when advertised; otherwise a bounded 4-frame alignment/merge fallback.
 - **PANORAMA** — continuous YUV frame sweep with a gyro-driven direction/level guide and a progressive stitched strip; clean-room multi-band horizontal alignment + feathering.
 - **MACRO** — Camera2 macro AF mode when the lens reports it.
-- **QR** — local ZXing QR analyzer with open/copy actions for the result.
+- **QR** — local ZXing barcode analyzer with open/copy actions for the result; the settings sheet can widen the search from QR only to the 2D matrix codes or every format ZXing knows.
 - **SLO-MO / TIME-LAPSE** — Camera2 constrained high-speed recording and MediaRecorder interval capture (see below). Slo-mo rates are hardware-reported; the Camera2 time-lapse path is bounded to FHD-or-smaller for reliable prepare/record.
 - **EXPERT** — manual ISO, shutter, focus, EV and white balance on top of the standard pipeline.
 
@@ -69,7 +72,7 @@ The carousel ships eleven entries: **PHOTO, PORTRAIT, BEAUTY, NIGHT, PANORAMA, M
 - RAW/DNG capture **plus** a companion JPEG where the hardware reports raw support; the EXPERT chip also cycles to **RAW ONLY** (a lone DNG) for people who develop their own files.
 - **Exposure bracketing**: an EXPOSURE BRACKET setting fires 3 or 5 stills at ±2 EV from one press, moving the compensation index between shots and restoring it afterwards.
 - Flash cycle: off / auto / on, plus **screen flash** for the front camera (CameraX `ScreenFlashView`); steady torch in video.
-- Self-timer off / 3 s / 10 s with a live countdown that can be cancelled.
+- Self-timer off / 3 s / 10 s / 20 s / 30 s / 60 s with a live countdown that can be cancelled, an optional spoken countdown, and a TIMER SHOTS series of 1-5 frames fired from one countdown.
 - **KEEP EXPOSURE** toggle: an exposure dialled in on the viewfinder slider is re-applied to every session change and remembered across launches, instead of being lost with the metering (a Nothing community request).
 - Anti-flicker: anti-banding at 50 Hz or 60 Hz, chosen from the modes the camera itself advertises.
 - Composition guides (rule of thirds, center, diagonal) and a gravity-driven level line.
@@ -94,6 +97,7 @@ A clean-room tracking autofocus for both photo modes and video:
 ### Zoom & lenses
 
 - Zoom stops derived from lenses exposed by the public CameraX/Camera2 API. On devices exposing only one public back camera, stops above 1x are digital crops; hidden OEM physical lenses are not claimed as available.
+- **Default focal** setting (24 / 28 / 35 mm equivalent, applied to whatever lens the session binds), and a tap on the *active* zoom chip steps through 28 mm → 35 mm → back to the lens's own wide stop, the way the stock app's 1x tap does.
 - Pinch-to-zoom with honest hardware-range clamping and a shared CameraX capture viewport, so the framing shown is the crop saved to the file; per-mode caps still apply.
 - Zoom chips are labelled with their 35 mm-equivalent focal length ("24mm"), computed from the serving lens' focal length and sensor size; the live readout keeps the ratio and adds the equivalent focal while pinching.
 - Front/back switch that keeps mode and preferences.
@@ -134,7 +138,7 @@ A clean-room tracking autofocus for both photo modes and video:
 
 ### QR
 
-- Fully local QR scanning (ZXing), with open/copy result actions. No network, no account.
+- Fully local QR scanning (ZXing), with open/copy result actions. No network, no account. Barcode types are selectable (QR only, 2D matrix codes, or all formats).
 
 ### Expert (manual)
 
@@ -196,7 +200,7 @@ Requirements:
 
 ```bash
 ./gradlew :app:assembleDebug       # debug APK
-./gradlew :app:testDebugUnitTest   # JVM unit tests (263)
+./gradlew :app:testDebugUnitTest   # JVM unit tests (273)
 ```
 
 `local.properties` (git-ignored) points at your SDK:
@@ -224,7 +228,7 @@ Runtime requirement: Android 13 or newer (`minSdk 33` — the preview-parity GL 
   - `ui/CameraScreen.kt`, `ui/GalleryScreen.kt`, `ui/FocusControls.kt`, `ui/CompositionOverlay.kt`, `ui/ProcessingSheet.kt`, `ui/CameraPlusApp.kt`, `ui/theme/Theme.kt` — Compose UI
   - `processing/` — software still pipeline (`ImageProcessor` pure math, `JpegProcessor` glue, `WatermarkRenderer`)
   - `settings/` — capture/processing/watermark preference models and stores
-- `app/src/test/` — JVM unit tests (263)
+- `app/src/test/` — JVM unit tests (273)
 - `dist/` — built APKs
 
 ## License

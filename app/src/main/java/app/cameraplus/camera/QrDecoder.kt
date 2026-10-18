@@ -8,11 +8,11 @@ import com.google.zxing.PlanarYUVLuminanceSource
 import com.google.zxing.common.HybridBinarizer
 
 /** Android-free QR luminance decoder, shared by CameraX and JVM tests. */
-class QrDecoder {
+class QrDecoder(formats: List<BarcodeFormat> = listOf(BarcodeFormat.QR_CODE)) {
     private val reader = MultiFormatReader().apply {
         setHints(
             mapOf(
-                DecodeHintType.POSSIBLE_FORMATS to listOf(BarcodeFormat.QR_CODE),
+                DecodeHintType.POSSIBLE_FORMATS to formats,
                 DecodeHintType.TRY_HARDER to true,
             ),
         )

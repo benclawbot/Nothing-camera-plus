@@ -104,6 +104,7 @@ import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import app.cameraplus.camera.FlashChoice
+import app.cameraplus.camera.FocalPresets
 import app.cameraplus.camera.PhotoAspectRatio
 import app.cameraplus.camera.PhotoResolution
 import app.cameraplus.camera.RawMode
@@ -230,7 +231,9 @@ fun CameraScreen(
 
     val store = remember(context) { ProcessingSettingsStore(context) }
     val capturePreferencesStore = remember(context) { CapturePreferencesStore(context) }
-    val capturePreferences = remember(capturePreferencesStore) { capturePreferencesStore.load() }
+    var capturePreferences by remember(capturePreferencesStore) {
+        mutableStateOf(capturePreferencesStore.load())
+    }
     val watermarkStore = remember(context) { WatermarkOptionsStore(context) }
     val galleryStore = remember(context) { GalleryPreferenceStore(context) }
     var processing by remember { mutableStateOf(store.load()) }
@@ -296,6 +299,14 @@ fun CameraScreen(
         if (capturePreferences.antiBanding == session.currentAntiBanding()) return@LaunchedEffect
         session.setAntiBanding(capturePreferences.antiBanding) { error ->
             status = error.message ?: "Could not change anti-flicker"
+        }
+    }
+
+    // Barcode families are baked into the QR analyzer at bind time, so a change
+    // rebuilds the QR session.
+    LaunchedEffect(capturePreferences.barcodeScanning) {
+        session.setBarcodeScanning(capturePreferences.barcodeScanning) { error ->
+            status = error.message ?: "Could not change the barcode types"
         }
     }
     var lastMediaUri by remember { mutableStateOf<Uri?>(null) }
@@ -517,6 +528,7 @@ fun CameraScreen(
     }
 
     fun applyCapturePreferences(options: CapturePreferences) {
+        capturePreferences = options
         flashChoice = options.flashChoice
         photoAspectRatio = options.photoAspectRatio
         photoResolution = if (capabilities.maximumPhotoResolutionSupported) {
@@ -566,6 +578,7 @@ fun CameraScreen(
         session.setMirrorCaptureEnabled(mirrorCapture)
         session.setShutterSoundEnabled(shutterSoundEnabled)
         session.setAntiBanding(capturePreferences.antiBanding)
+        session.setBarcodeScanning(capturePreferences.barcodeScanning)
         session.setWatermarkOptions(watermark)
         session.setCaptureLocation(currentLocation)
         session.setExtensionMode(extensionModeFor(mode, photoHdrEnabled))
@@ -714,6 +727,7 @@ fun CameraScreen(
     }
 
     LaunchedEffect(
+        capturePreferences,
         flashChoice,
         photoAspectRatio,
         photoResolution,
@@ -732,7 +746,7 @@ fun CameraScreen(
         bokehLevel,
     ) {
         capturePreferencesStore.save(
-            CapturePreferences(
+            capturePreferences.copy(
                 flashChoice = flashChoice,
                 photoAspectRatio = photoAspectRatio,
                 photoResolution = photoResolution,
@@ -773,6 +787,23 @@ fun CameraScreen(
     }
 
     var previousMode by remember { mutableStateOf(CameraMode.PHOTO) }
+
+    // Default focal (a Nothing community request): a 24 / 28 / 35 mm preset,
+    // applied whenever the setting or the lens's own reference focal changes.
+    // Expressed against the reference lens, because displayed 1x is that lens.
+    LaunchedEffect(capturePreferences.defaultFocalMm, capabilities.referenceEqFocalMm) {
+        val targetMm = capturePreferences.defaultFocalMm
+        if (targetMm <= 0) return@LaunchedEffect
+        val target = FocalPresets.displayedZoomFor(
+            targetMm = targetMm,
+            referenceEqFocalMm = capabilities.referenceEqFocalMm,
+            minZoom = capabilities.minDisplayedZoom,
+            maxZoom = modeZoomMaximum,
+        ) ?: return@LaunchedEffect
+        zoom = session.setDisplayedZoom(target) { error ->
+            status = error.message ?: "Could not apply the default focal"
+        }
+    }
     LaunchedEffect(mode) {
         // A decoded link is a one-shot action, not a sticky overlay when the
         // user changes modes or returns from an external browser.
@@ -1139,6 +1170,21 @@ fun CameraScreen(
         }
     }
 
+    /**
+     * 35 mm-equivalent focal presets: choosing one also makes it the default, so
+     * the choice survives a mode switch and a relaunch. AUTO hands the
+     * viewfinder back to the lens's own wide stop.
+     */
+    fun selectFocalPreset(targetMm: Int) {
+        applyCapturePreferences(capturePreferences.copy(defaultFocalMm = targetMm))
+        if (targetMm == FocalPresets.AUTO) {
+            zoom = session.setDisplayedZoom(1f) { error ->
+                status = error.message ?: "Could not zoom"
+            }
+        }
+        status = if (targetMm == FocalPresets.AUTO) "1x" else "${targetMm}MM"
+    }
+
     /** One press, several exposures: see [ExposureBracketPlan]. */
     fun bracketEligible(): Boolean =
         capturePreferences.exposureBracket.enabled &&
@@ -1335,12 +1381,25 @@ fun CameraScreen(
         }
     }
 
-    // Self-timer countdown; zero means idle.
+    // Voice countdown (Open Camera): speaks the remaining seconds. Built only
+    // while the preference is on, and shut down when it is switched off or the
+    // screen goes away.
+    val voice = remember(capturePreferences.voiceCountdown) {
+        if (capturePreferences.voiceCountdown) VoiceCountdown(context) else null
+    }
+    DisposableEffect(voice) {
+        onDispose { voice?.release() }
+    }
+
+    // Self-timer countdown; zero means idle. When it ends, the timer fires its
+    // configured series of shots (1-5).
     LaunchedEffect(timerDeadline) {
         if (timerDeadline == 0L) {
             timerLeft = 0
             return@LaunchedEffect
         }
+        var spoken = -1
+        val shots = capturePreferences.selfTimerShots.coerceIn(1, MAX_TIMER_SHOTS)
         while (true) {
             val left = CaptureTimer.remaining(
                 seconds = selfTimer.seconds,
@@ -1348,11 +1407,20 @@ fun CameraScreen(
                 nowMillis = System.currentTimeMillis(),
             )
             timerLeft = left
+            if (left != spoken) {
+                spoken = left
+                if (left > 0) voice?.say(left)
+            }
             if (left <= 0) {
                 timerDeadline = 0L
                 if (pendingShot) {
                     pendingShot = false
-                    captureNow()
+                    for (shot in 1..shots) {
+                        inFlight++
+                        if (shots > 1) status = "TIMER $shot/$shots"
+                        captureNow()
+                        if (shot < shots) delay(TIMER_SERIES_INTERVAL_MILLIS)
+                    }
                 }
                 break
             }
@@ -1807,10 +1875,18 @@ fun CameraScreen(
                     zoomable = modeZoomMaximum > capabilities.minDisplayedZoom,
                     referenceEqFocalMm = capabilities.referenceEqFocalMm,
                     onSelect = { stop ->
-                        zoom = session.setDisplayedZoom(stop) { error ->
-                            status = error.message ?: "Could not switch lens"
+                        if (stop != zoom) {
+                            zoom = session.setDisplayedZoom(stop) { error ->
+                                status = error.message ?: "Could not switch lens"
+                            }
+                            pinching = false
+                        } else {
+                            // Tapping the active chip steps the 35 mm-equivalent
+                            // focal preset: 28 mm, then 35 mm, then the lens's
+                            // own wide stop (see FocalPresets.next).
+                            val liveMm = capabilities.referenceEqFocalMm * zoom
+                            selectFocalPreset(FocalPresets.next(FocalPresets.nearestPreset(liveMm)))
                         }
-                        pinching = false
                     },
                 )
                 if (capabilities.zoomStops.any { it <= modeZoomMaximum } &&
@@ -2915,6 +2991,10 @@ private val SLIDER_SIDE_GAP = 64.dp
 /** How many captures may be writing at once before the shutter stops arming. */
 private const val MAX_IN_FLIGHT = 4
 private const val MODE_CAPTURE_MAX_DIMENSION = 1600
+
+/** Upper bound for a self-timer series, and the gap between its shots. */
+private const val MAX_TIMER_SHOTS = 5
+private const val TIMER_SERIES_INTERVAL_MILLIS = 1_500L
 private const val NIGHT_FRAME_COUNT = 4
 private const val NIGHT_FRAME_INTERVAL_MS = 120L
 private const val PORTRAIT_BLUR_RADIUS = 18
