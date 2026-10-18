@@ -17,6 +17,9 @@ import kotlin.math.roundToInt
  * Coordinates handed to the callbacks are normalized over the upright luma
  * frame (0..1, origin top-left); the session converts them to preview-view
  * pixels with [TrackingGeometry].
+ *
+ * The frame is never closed here: the stream's owner ([FanOutAnalyzer]) closes
+ * it once every consumer has seen it.
  */
 class SubjectTrackingAnalyzer : ImageAnalysis.Analyzer {
 
@@ -108,8 +111,6 @@ class SubjectTrackingAnalyzer : ImageAnalysis.Analyzer {
         } catch (_: Throwable) {
             // A dropped analysis frame must never take the camera down;
             // the next frame simply tries again.
-        } finally {
-            image.close()
         }
     }
 

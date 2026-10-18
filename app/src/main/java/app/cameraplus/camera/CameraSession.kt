@@ -169,9 +169,13 @@ class CameraSession(
     private var onSubjectTracked: (Float, Float, Float) -> Unit = { _, _, _ -> }
     private var onSubjectTrackingCleared: () -> Unit = {}
     private var onSubjectTrackingUnavailable: () -> Unit = {}
-    private val trackingExecutor: Executor = Executors.newSingleThreadExecutor()
+    private var onHistogram: (LumaHistogram) -> Unit = {}
+    private var onHistogramUnavailable: () -> Unit = {}
+    private val analysisExecutor: Executor = Executors.newSingleThreadExecutor()
     private val subjectAnalyzer = SubjectTrackingAnalyzer()
     private var subjectTrackingEnabled = false
+    private val histogramAnalyzer = HistogramAnalyzer()
+    private var histogramEnabled = false
     private var lastTrackingMeterAt = 0L
     private var lastTrackingMeterX = 0f
     private var lastTrackingMeterY = 0f
@@ -244,6 +248,8 @@ class CameraSession(
         onSubjectTracked: (Float, Float, Float) -> Unit = { _, _, _ -> },
         onSubjectTrackingCleared: () -> Unit = {},
         onSubjectTrackingUnavailable: () -> Unit = {},
+        onHistogram: (LumaHistogram) -> Unit = {},
+        onHistogramUnavailable: () -> Unit = {},
         onError: (Exception) -> Unit = {},
     ) {
         suspended = false
@@ -258,6 +264,11 @@ class CameraSession(
         this.onSubjectTracked = onSubjectTracked
         this.onSubjectTrackingCleared = onSubjectTrackingCleared
         this.onSubjectTrackingUnavailable = onSubjectTrackingUnavailable
+        this.onHistogramUnavailable = onHistogramUnavailable
+        this.onHistogram = onHistogram
+        histogramAnalyzer.onHistogram = { stats ->
+            mainExecutor.execute { runCatching { onHistogram(stats) } }
+        }
         subjectAnalyzer.onSelected = { x, y, score ->
             mainExecutor.execute { handleTrackedPosition(x, y, score) }
         }
@@ -546,6 +557,18 @@ class CameraSession(
     }
 
     /**
+     * Turns the expert histogram on or off. Like subject tracking this
+     * rebinds, because the analysis stream has to be part of the session when
+     * it is created.
+     */
+    fun setHistogramEnabled(enabled: Boolean, onError: (Exception) -> Unit = {}) {
+        if (histogramEnabled == enabled) return
+        histogramEnabled = enabled
+        histogramAnalyzer.enabled = enabled
+        rebind(onError)
+    }
+
+    /**
      * Locks the tracker onto the subject under preview-view pixels
      * ([x], [y]) and focuses there. From then on every analyzed position
      * moves the AF/AE metering point with the subject. Returns false while
@@ -615,11 +638,25 @@ class CameraSession(
         NormRect.FULL, frameWidth, frameHeight, viewWidth, viewHeight,
     )
 
-    /** Builds the analysis use case that feeds [subjectAnalyzer]. */
-    private fun buildTrackingAnalysis(): ImageAnalysis {
+    /**
+     * The analysis consumers the next bind should host, if any: subject
+     * tracking when armed and the expert histogram when enabled. Both want the
+     * same thing from the HAL, so they share one stream through
+     * [FanOutAnalyzer] instead of competing for a second analysis use case.
+     */
+    private fun activeAnalyzers(): List<ImageAnalysis.Analyzer> {
         subjectAnalyzer.mirrorHorizontally = lensFacing == CameraSelector.LENS_FACING_FRONT
-        subjectAnalyzer.setTrackingEnabled(true)
-        return ImageAnalysis.Builder()
+        subjectAnalyzer.setTrackingEnabled(subjectTrackingEnabled)
+        histogramAnalyzer.enabled = histogramEnabled
+        return buildList {
+            if (subjectTrackingEnabled) add(subjectAnalyzer)
+            if (histogramEnabled) add(histogramAnalyzer)
+        }
+    }
+
+    /** Builds the single analysis use case that feeds [analyzers]. */
+    private fun buildAnalysisUseCase(analyzers: List<ImageAnalysis.Analyzer>): ImageAnalysis =
+        ImageAnalysis.Builder()
             .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
             .setResolutionSelector(
                 ResolutionSelector.Builder()
@@ -632,8 +669,7 @@ class CameraSession(
                     .build(),
             )
             .build()
-            .also { it.setAnalyzer(trackingExecutor, subjectAnalyzer) }
-    }
+            .also { it.setAnalyzer(analysisExecutor, FanOutAnalyzer(analyzers)) }
 
     /** Maps an analyzed position onto the view and keeps AF/AE on it. */
     private fun handleTrackedPosition(nx: Float, ny: Float, score: Float) {
@@ -1723,10 +1759,11 @@ class CameraSession(
             capture = stillCapture
             useCases += stillCapture
             useCases += built
-            if (subjectTrackingEnabled) {
-                val tracking = buildTrackingAnalysis()
-                analysis = tracking
-                useCases += tracking
+            val analyzers = activeAnalyzers()
+            if (analyzers.isNotEmpty()) {
+                val built = buildAnalysisUseCase(analyzers)
+                analysis = built
+                useCases += built
             }
         } else if (mode == SessionMode.QR) {
             val built = ImageAnalysis.Builder()
@@ -1787,10 +1824,11 @@ class CameraSession(
             }
             capture = built
             useCases += built
-            if (subjectTrackingEnabled) {
-                val tracking = buildTrackingAnalysis()
-                analysis = tracking
-                useCases += tracking
+            val analyzers = activeAnalyzers()
+            if (analyzers.isNotEmpty()) {
+                val built = buildAnalysisUseCase(analyzers)
+                analysis = built
+                useCases += built
             }
         }
 
@@ -1824,28 +1862,46 @@ class CameraSession(
                 }
             }
             if (analysis != null && mode != SessionMode.PANORAMA) {
-                // Subject tracking adds an analysis stream. If this camera
-                // cannot host it alongside the current combination, keep the
-                // camera usable and turn tracking off instead of failing.
+                // Subject tracking and the expert histogram add an analysis
+                // stream. If this camera cannot host it alongside the current
+                // combination, keep the camera usable and turn those features
+                // off instead of failing.
+                val trackingWasOn = subjectTrackingEnabled
+                val histogramWasOn = histogramEnabled
                 provider.unbindAll()
-                val withoutTracking = useCases.filterNot { it === analysis }
-                val trackingFreeConfig = buildUseCaseGroup(withoutTracking)
+                val withoutAnalysis = useCases.filterNot { it === analysis }
+                val analysisFreeConfig = buildUseCaseGroup(withoutAnalysis)
                 recovered = runCatching {
-                    provider.bindToLifecycle(lifecycleOwner, selector, trackingFreeConfig)
+                    provider.bindToLifecycle(lifecycleOwner, selector, analysisFreeConfig)
                 }.getOrNull()
                 if (recovered != null) {
                     analysis = null
-                    subjectTrackingEnabled = false
-                    subjectAnalyzer.setTrackingEnabled(false)
-                    runCatching {
-                        errorSink(
-                            IllegalStateException(
-                                "Subject tracking is not supported with this camera",
-                                t,
-                            ),
-                        )
+                    if (trackingWasOn) {
+                        subjectTrackingEnabled = false
+                        subjectAnalyzer.setTrackingEnabled(false)
+                        runCatching {
+                            errorSink(
+                                IllegalStateException(
+                                    "Subject tracking is not supported with this camera",
+                                    t,
+                                ),
+                            )
+                        }
+                        runCatching { onSubjectTrackingUnavailable() }
                     }
-                    runCatching { onSubjectTrackingUnavailable() }
+                    if (histogramWasOn) {
+                        histogramEnabled = false
+                        histogramAnalyzer.enabled = false
+                        runCatching {
+                            errorSink(
+                                IllegalStateException(
+                                    "The histogram is not supported with this camera",
+                                    t,
+                                ),
+                            )
+                        }
+                        runCatching { onHistogramUnavailable() }
+                    }
                 }
             }
             if (recovered == null && mode == SessionMode.VIDEO && capture != null && video != null) {
@@ -1881,12 +1937,19 @@ class CameraSession(
             }
             recovered
         }
-        if (mode != SessionMode.QR && subjectTrackingEnabled && analysis == null) {
+        if (mode != SessionMode.QR && analysis == null) {
             // The analysis stream never made it into the session: leave the
-            // camera usable, but be honest that tracking is off.
-            subjectTrackingEnabled = false
-            subjectAnalyzer.setTrackingEnabled(false)
-            runCatching { onSubjectTrackingUnavailable() }
+            // camera usable, but be honest that the readouts it feeds are off.
+            if (subjectTrackingEnabled) {
+                subjectTrackingEnabled = false
+                subjectAnalyzer.setTrackingEnabled(false)
+                runCatching { onSubjectTrackingUnavailable() }
+            }
+            if (histogramEnabled) {
+                histogramEnabled = false
+                histogramAnalyzer.enabled = false
+                runCatching { onHistogramUnavailable() }
+            }
         }
         if (mode == SessionMode.VIDEO && capture != null) videoSnapshotSupported = true
         imageCapture = capture

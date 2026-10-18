@@ -16,6 +16,7 @@ Current release: **v1.2.0** (`versionCode 5`), debug-signed, `minSdk 33` (Androi
 | Video pipeline (Recorder, stabilization, OIS, snapshots, mute) | Previously device-verified; NR and Camera2 recorder changes await re-test |
 | Modes: Photo, Video, Portrait, Beauty, Night, Panorama, Macro, QR, Slow motion, Time lapse, Expert | Implemented; live panorama / Camera2 recorder changes await device verification |
 | Expert manual controls (ISO / shutter / focus / EV / WB) | Done, device-verified |
+| Expert histogram | Implemented; device verification pending |
 | Subject tracking (photo + video) | Done, device-verified (added in v1.2.0) |
 | Launcher shortcuts | Implemented; device verification pending |
 | Continuous shot (hold shutter) | Implemented; device verification pending |
@@ -128,6 +129,7 @@ A clean-room tracking autofocus for both photo modes and video:
 - Manual ISO, exposure time and focus, with honest AUTO positions and ranges taken from the camera characteristics (log-scale gauges keep the low end usable).
 - White-balance presets plus custom Kelvin.
 - EV compensation with an on-viewfinder slider after a tap.
+- **Histogram** toggle: a live luma readout (32 bars plus mean and clipped-black/white percentages) drawn over the viewfinder, computed from an analysis stream that shares the session with subject tracking. It turns itself off and says so if the camera cannot host that stream.
 - All manual surfaces are opt-in; PHOTO stays simple.
 
 ### Focus & exposure gestures
@@ -180,7 +182,7 @@ Requirements:
 
 ```bash
 ./gradlew :app:assembleDebug       # debug APK
-./gradlew :app:testDebugUnitTest   # JVM unit tests (234)
+./gradlew :app:testDebugUnitTest   # JVM unit tests (240)
 ```
 
 `local.properties` (git-ignored) points at your SDK:
@@ -208,7 +210,7 @@ Runtime requirement: Android 13 or newer (`minSdk 33` — the preview-parity GL 
   - `ui/CameraScreen.kt`, `ui/GalleryScreen.kt`, `ui/FocusControls.kt`, `ui/CompositionOverlay.kt`, `ui/ProcessingSheet.kt`, `ui/CameraPlusApp.kt`, `ui/theme/Theme.kt` — Compose UI
   - `processing/` — software still pipeline (`ImageProcessor` pure math, `JpegProcessor` glue, `WatermarkRenderer`)
   - `settings/` — capture/processing/watermark preference models and stores
-- `app/src/test/` — JVM unit tests (234)
+- `app/src/test/` — JVM unit tests (240)
 - `dist/` — built APKs
 
 ## License

@@ -242,3 +242,13 @@
   when the viewer closes. The old "Tap to open in your video player" hand-off
   and its helper are gone; Share on a video still uses the system chooser. 234
   JVM tests pass; APK compiles. Device verification pending.
+- 2026-10-18: expert histogram. EXPERT mode gains a HISTOGRAM toggle (persisted
+  with the capture preferences, cleared by the settings sheet's restore
+  defaults): a 32-bar luma histogram with mean and clipped-black/white
+  percentages drawn over the viewfinder. `LumaHistogram` is the pure,
+  unit-tested math; `HistogramAnalyzer` reuses `LumaExtractor` at ~10 Hz.
+  Because CameraX wants a single analysis use case, tracking and the histogram
+  now share one stream through `FanOutAnalyzer`, which owns closing the frame.
+  The histogram rebinds like tracking and turns itself off with a status note
+  when the camera cannot host an analysis stream. 240 JVM tests pass (6 new);
+  APK compiles. Device verification pending.

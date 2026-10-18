@@ -26,13 +26,13 @@ look, and the new subject tracking. Closed 2026-10-18: launcher shortcuts
 hold-shutter continuous shot (10-frame cap, PHOTO/EXPERT only), focal-length
 zoom labels, the settings sheet's restore-defaults action, the watermark
 camera-parameters line, `DCIM/Camera` storage for photos and videos, a
-gallery-app picker in the camera settings and in-app video playback.
+gallery-app picker in the camera settings, in-app video playback and the
+expert histogram.
 
 Genuine remaining gaps (clean-room implementable):
 
 | Gap | Effort | Note |
 |---|---|---|
-| Expert histogram / pro meter | medium | needs live luma statistics in the viewfinder |
 | Video encoder picker (H.264 / H.265) | medium | CameraX Recorder picks the codec; Camera2 recorder path needed |
 | Video HDR / SHDR toggles | medium | device/extension dependent |
 | Night video mode | medium | |
@@ -60,7 +60,7 @@ ArcSoft/morpho panorama, smile shutter (vendor face ML).
 | Time lapse (X15…X960) | 🟡 | Camera2 + MediaRecorder interval path; hardware unverified |
 | Panorama (+ direction switch, super/standard) | 🟡 | Continuous YUV sweep, gyro/level guide and progressive preview; three-band translation stitch, device check pending |
 | Macro / Detail close-up | 🟡 | Camera2 macro AF mode when the lens reports it; 4cm/tele macro unverified |
-| Expert / Manual | 🟡 | ISO/shutter/MF/EV and WB presets/custom Kelvin; histogram/Pro meter missing |
+| Expert / Manual | ✅ | ISO/shutter/MF/EV, WB presets/custom Kelvin, and a live luma histogram with mean and clip readout |
 | Beauty / retouching | 🟡 | CameraX FACE_RETOUCH extension when available; fallback is basic smoothing |
 | Beauty video | 🚫 | no video face-retouch pipeline |
 | PanoNight | ⬜ | stretch |
@@ -298,7 +298,7 @@ unit-tested math component does not count as hardware feature parity.
 
 | Original item | Status | Evidence / Camera+ note |
 |---|---|---|
-| Expert / Manual photo mode | 🟡 | ISO, exposure time, manual focus and RAW present |
+| Expert / Manual photo mode | ✅ | ISO, exposure time, manual focus, RAW and the live histogram present |
 | ISO Auto and manual ISO 50–6400 | 🟡 | device-reported ISO range, not original fixed options |
 | Shutter Auto / 1/12000…30s | 🟡 | device-reported exposure range |
 | Manual focus progress control | 🟡 | manual focus slider; device range varies |
@@ -308,7 +308,7 @@ unit-tested math component does not count as hardware feature parity.
 | Long-press AF/AE lock | 🟡 | long-duration metering action; hardware behavior unverified |
 | On-viewfinder brightness/EV slider | 🟡 | CameraX exposure-compensation index; hardware behavior unverified |
 | Subject tracking (tap a subject, focus follows it) | ✅ | clean-room zero-mean NCC tracker (2026-10-17); top-bar toggle, reticle overlay, AF/AE metering follows the subject in photo modes and video; device-verified coordinate mapping and metering cadence |
-| Expert histogram and level meter | ⬜ | composition level exists, but no histogram or Pro meter |
+| Expert histogram and level meter | ✅ | live luma histogram (32 bars, mean, black/white clip percentages) in EXPERT behind a HISTOGRAM toggle; the composition level line is present. The original's separate level-meter widget and Pro-meter screen are not mirrored |
 | Lens stops from physical focal lengths (0.6x/1x/2x/…) | 🟡 | planner handles logical and separate cameras; actual phone inventory unverified |
 | Pinch-to-zoom and manual zoom across device range | 🟡 | implemented and clamped; range depends on hardware |
 | Original focal labels (14/24/28/35/50/85mm) | ✅ | Computed from HAL focal + sensor size (the original's own convention: 35 mm-equivalent, 43.27 mm diagonal); shown on zoom chips and the live readout; device unverified |

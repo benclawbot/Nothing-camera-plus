@@ -111,6 +111,7 @@ import app.cameraplus.camera.ZoomUseCase
 import app.cameraplus.camera.WhiteBalancePreset
 import app.cameraplus.camera.LensZoomPlan
 import app.cameraplus.camera.ManualControlPlan
+import app.cameraplus.camera.LumaHistogram
 import app.cameraplus.camera.ManualControls
 import app.cameraplus.camera.CameraSession
 import app.cameraplus.camera.Camera2Recorder
@@ -244,6 +245,8 @@ fun CameraScreen(
     var trackingArmed by remember { mutableStateOf(capturePreferences.subjectTracking) }
     var trackingPoint by remember { mutableStateOf<Offset?>(null) }
     var trackingConfidence by remember { mutableFloatStateOf(1f) }
+    var histogram by remember { mutableStateOf<LumaHistogram?>(null) }
+    var histogramArmed by remember { mutableStateOf(capturePreferences.histogramEnabled) }
 
     // A metering ring that is not locked goes away on its own, like the
     // stock timer; a locked one stays until the next tap or mode switch.
@@ -288,6 +291,16 @@ fun CameraScreen(
             trackingPoint = null
             trackingConfidence = 1f
         }
+    }
+
+    // The histogram rides the same analysis stream, so it follows the mode and
+    // the expert preference the same way tracking does.
+    LaunchedEffect(mode, histogramArmed) {
+        val wanted = histogramArmed && mode == CameraMode.EXPERT
+        session.setHistogramEnabled(wanted) { error ->
+            status = error.message ?: "Could not change the histogram"
+        }
+        if (!wanted) histogram = null
     }
 
     var capabilities by remember { mutableStateOf(SessionCapabilities()) }
@@ -464,6 +477,7 @@ fun CameraScreen(
         shutterSoundEnabled = options.shutterSoundEnabled
         volumeKeyShutter = options.volumeKeyShutter
         touchShutter = options.touchShutter
+        histogramArmed = options.histogramEnabled
         photoHdrEnabled = options.photoHdrEnabled && capabilities.hdrExtensionAvailable
         timeLapseSpeed = options.timeLapseSpeed
         slowMotionFps = options.slowMotionFps
@@ -497,6 +511,7 @@ fun CameraScreen(
         // The session must already know whether to include the tracking
         // analyzer when it binds.
         session.setSubjectTrackingEnabled(trackingArmed && mode.supportsSubjectTracking())
+        session.setHistogramEnabled(histogramArmed && mode == CameraMode.EXPERT)
         session.bind(
             previewView = previewView,
             onQrCode = { value ->
@@ -517,6 +532,12 @@ fun CameraScreen(
                 trackingArmed = false
                 trackingPoint = null
                 capturePreferencesStore.setSubjectTracking(false)
+            },
+            onHistogram = { stats -> histogram = stats },
+            onHistogramUnavailable = {
+                histogramArmed = false
+                histogram = null
+                capturePreferencesStore.setHistogram(false)
             },
             onZslChanged = { active ->
                 status = if (active) "Instant shutter ready" else null
@@ -1464,6 +1485,16 @@ fun CameraScreen(
                     )
                 }
             }
+            if (mode == CameraMode.EXPERT && histogramArmed) {
+                histogram?.let { stats ->
+                    HistogramOverlay(
+                        histogram = stats,
+                        modifier = Modifier
+                            .align(Alignment.TopEnd)
+                            .padding(top = 64.dp, end = 12.dp),
+                    )
+                }
+            }
         }
 
         Row(
@@ -1760,6 +1791,7 @@ fun CameraScreen(
                         minFocusDistance = capabilities.minFocusDistance,
                         rawEnabled = rawEnabled,
                         rawSupported = capabilities.rawSupported,
+                        histogramEnabled = histogramArmed,
                         whiteBalance = whiteBalance,
                         whiteBalanceKelvin = whiteBalanceKelvin,
                         onIsoChange = { isoGauge = it },
@@ -1795,6 +1827,12 @@ fun CameraScreen(
                             session.setRawEnabled(next) { error ->
                                 status = error.message ?: "Could not change RAW mode"
                             }
+                        },
+                        onHistogramToggle = {
+                            val next = !histogramArmed
+                            histogramArmed = next
+                            capturePreferencesStore.setHistogram(next)
+                            status = if (next) "Histogram on" else null
                         },
                     )
                     Spacer(Modifier.height(14.dp))
@@ -2229,6 +2267,7 @@ private fun ExpertControls(
     minFocusDistance: Float?,
     rawEnabled: Boolean,
     rawSupported: Boolean,
+    histogramEnabled: Boolean,
     whiteBalance: WhiteBalancePreset,
     whiteBalanceKelvin: Int,
     onIsoChange: (Float) -> Unit,
@@ -2238,6 +2277,7 @@ private fun ExpertControls(
     onWhiteBalanceKelvinChange: (Int) -> Unit,
     onCommit: () -> Unit,
     onRawToggle: () -> Unit,
+    onHistogramToggle: () -> Unit,
 ) {
     Column(horizontalAlignment = Alignment.CenterHorizontally) {
         Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
@@ -2313,6 +2353,13 @@ private fun ExpertControls(
             active = rawEnabled,
             enabled = rawSupported,
             onClick = onRawToggle,
+        )
+        Spacer(Modifier.height(6.dp))
+        ToggleChip(
+            label = "HISTOGRAM",
+            active = histogramEnabled,
+            enabled = true,
+            onClick = onHistogramToggle,
         )
     }
 }
