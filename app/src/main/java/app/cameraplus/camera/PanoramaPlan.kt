@@ -1,6 +1,7 @@
 package app.cameraplus.camera
 
 import kotlin.math.ceil
+import kotlin.math.roundToInt
 
 /**
  * Which way the user sweeps, and how that maps onto the stitched canvas.
@@ -71,6 +72,16 @@ object PanoramaPlan {
 
     /** Fractional overlap between consecutive frames. */
     const val DEFAULT_OVERLAP = 0.3f
+
+    /** Desired adjacent-frame overlap for a continuous mobile sweep. */
+    const val KEYFRAME_OVERLAP = 0.45f
+
+    /**
+     * Keep 35–60% of the frame shared: enough texture for a clean-room
+     * translation matcher without filling the frame cap with near-duplicates.
+     */
+    const val MIN_KEYFRAME_SHIFT_FRACTION = 0.35f
+    const val MAX_KEYFRAME_SHIFT_FRACTION = 0.60f
 
     /**
      * Hard cap on frames in one sweep. Twelve frames is what the stitcher is
@@ -161,5 +172,21 @@ object PanoramaPlan {
         require(overlap > 0f && overlap < 1f) { "overlap must be within (0, 1), was $overlap" }
         require(tolerance >= 0f) { "tolerance must not be negative, was $tolerance" }
         return (1f - overlap - tolerance).coerceAtLeast(0f)
+    }
+
+    /** Valid pixel-shift interval for one accepted panorama keyframe. */
+    fun keyframeShiftRange(frameWidth: Int): IntRange {
+        require(frameWidth > 0) { "frame width must be positive, was $frameWidth" }
+        val minimum = (frameWidth * MIN_KEYFRAME_SHIFT_FRACTION).toInt().coerceAtLeast(2)
+        val maximum = (frameWidth * MAX_KEYFRAME_SHIFT_FRACTION).toInt()
+            .coerceAtLeast(minimum)
+        return minimum..maximum
+    }
+
+    /** Percent overlap remaining after [shiftPixels] of horizontal movement. */
+    fun overlapPercent(frameWidth: Int, shiftPixels: Int): Int {
+        require(frameWidth > 0) { "frame width must be positive, was $frameWidth" }
+        return ((frameWidth - kotlin.math.abs(shiftPixels)).toFloat() / frameWidth * 100f)
+            .roundToInt().coerceIn(0, 100)
     }
 }

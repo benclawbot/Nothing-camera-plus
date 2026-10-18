@@ -85,7 +85,7 @@ Nothing community's own camera feedback threads (`nothing.community`).
 | Night | 🟡 | CameraX NIGHT extension if advertised; otherwise 4-frame downsampled merge |
 | Slow motion (device-supported high-speed rates) | 🟡 | Camera2 constrained high-speed + MediaRecorder path; hardware unverified |
 | Time lapse (X15…X960) | 🟡 | Camera2 + MediaRecorder interval path; hardware unverified |
-| Panorama (+ direction switch, super/standard) | 🟡 | Continuous YUV sweep, gyro/level guide and progressive preview; three-band translation stitch, device check pending |
+| Panorama (+ direction switch, super/standard) | 🟡 | Continuous YUV sweep, gyro waypoints/level guide, AE/AWB lock where reported, 35–60% keyframe movement (40–65% overlap), slow-down feedback, progressive preview and cancel/save controls; three-band translation stitch, device check pending |
 | Macro / Detail close-up | 🟡 | Camera2 macro AF mode when the lens reports it; 4cm/tele macro unverified |
 | Expert / Manual | ✅ | ISO/shutter/MF/EV, WB presets/custom Kelvin, and a live luma histogram with mean and clip readout |
 | Beauty / retouching | 🟡 | CameraX FACE_RETOUCH extension when available; fallback is basic smoothing |
@@ -185,6 +185,9 @@ Nothing community's own camera feedback threads (`nothing.community`).
 | Sweep capture + frame counter | 🟡 | downsampled frames; direction is a UI guide |
 | Stitch output | 🟡 | translation-only cross-correlation + feather; no OEM-level correction |
 | Direction switch | 🟡 | guide label only; stitching follows measured frame shifts |
+| Panorama keyframe overlap/speed management | 🟡 | only accepts matched shifts in a 35–60% frame-width band (40–65% overlap); duplicate/too-fast frames are skipped with feedback, reducing near-duplicate cap-outs |
+| Stable exposure and color across sweep | 🟡 | Camera2 AE/AWB lock requested only where advertised; HAL behavior and relock after capture need device pass |
+| Save / cancel active sweep | ✅ | Stop & Save or Cancel controls; cancel clears buffered frames without writing |
 
 ## Macro
 

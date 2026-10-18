@@ -37,6 +37,12 @@ import kotlin.math.roundToInt
  * still panning. The full stitch in [finish] re-measures everything anyway,
  * so a bad frame that got through is still caught.
  *
+ * A stored keyframe must advance by 35–60% of the frame width (40–65%
+ * overlap). Smaller shifts are preview duplicates; larger jumps are likely to
+ * lose stitching detail. This is deliberately independent from the analyzer
+ * throttle: preview frames continue to arrive, but only useful overlap enters
+ * the bounded stitch buffer.
+ *
  * Every frame is downscaled to [maxDimension] on the way in, because the
  * stitched canvas is roughly `frames * cadence` pixels wide and a 50 MP frame
  * would put a 200 MB pixel array (and a gigabyte-sized canvas) on the heap.
@@ -60,7 +66,7 @@ class PanoramaCapture(
     private val maxFrames: Int = PanoramaPlan.MAX_FRAMES,
     /** Longest edge, in pixels, of the frames actually stored and stitched. */
     private val maxDimension: Int = DEFAULT_MAX_DIMENSION,
-    /** Matcher search radius per frame; null means a third of the frame width. */
+    /** Matcher search radius per frame; null leaves room to diagnose fast sweeps. */
     private val maxShiftOverride: Int? = null,
 ) {
 
@@ -86,6 +92,9 @@ class PanoramaCapture(
 
         /** Movement against the direction this sweep has committed to. */
         WRONG_DIRECTION,
+
+        /** Movement skipped too much shared image area for a safe stitch. */
+        TOO_FAST,
     }
 
     /**
@@ -106,6 +115,8 @@ class PanoramaCapture(
         val isFull: Boolean,
         /** Shift to the previous stored frame, in working pixels; null before the second one. */
         val shiftPixels: Int?,
+        /** Shared width of the last accepted pair, in percent; null on the first frame. */
+        val overlapPercent: Int?,
         /** The direction the measured shifts have committed to, once there is one. */
         val direction: Direction?,
         /** Why the most recent frame was not stored. */
@@ -181,7 +192,9 @@ class PanoramaCapture(
             workingHeight,
             maxShift(),
         )
-        if (abs(shift) < minShiftPixels()) return reject(Rejection.NO_MOVEMENT)
+        val shiftRange = PanoramaPlan.keyframeShiftRange(workingWidth)
+        if (abs(shift) < shiftRange.first) return reject(Rejection.NO_MOVEMENT)
+        if (abs(shift) > shiftRange.last) return reject(Rejection.TOO_FAST)
         val enforced = if (expectedDirection != 0) expectedDirection else committedDirection?.canvasShiftSign ?: 0
         val measuredDirection = when {
             shift > 0 -> 1
@@ -365,15 +378,14 @@ class PanoramaCapture(
             maxFrames = maxFrames,
             isFull = frames.size >= maxFrames,
             shiftPixels = lastShift,
+            overlapPercent = lastShift?.let { PanoramaPlan.overlapPercent(workingWidth, it) },
             direction = committedDirection,
             lastRejection = lastRejection,
         )
     }
 
-    private fun maxShift(): Int = maxShiftOverride ?: workingWidth / 3
-
-    /** Movement below this is a pause (or a flat subject), not a sweep step. */
-    private fun minShiftPixels(): Int = max(2, workingWidth / 64)
+    /** Search far enough to diagnose a lost-overlap sweep as TOO_FAST. */
+    private fun maxShift(): Int = maxShiftOverride ?: (workingWidth * 0.75f).roundToInt()
 
     private fun clear() {
         frames.clear()

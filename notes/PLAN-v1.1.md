@@ -364,3 +364,17 @@
   frame size; DNG remains unchanged. All new settings are persisted and
   included in presets. 309 JVM tests pass (10 new); APK compiles. Device
   verification pending.
+- 2026-10-18: panorama capture management, borrowing the most useful ideas from
+  Pixel Camera, Open Camera and multi-frame panorama tools. Keyframes now need
+  a measured 35–60% frame shift (40–65% overlap), so slow sweeps no longer
+  fill the 12-frame cap with near-duplicates; a low-overlap jump is rejected
+  with a slow-down instruction. The viewfinder adds four progress waypoints
+  and reports the measured overlap, rather than presenting the hard frame cap
+  as a target. When Camera2 advertises AE/AWB locks, the app locks both for the
+  sweep and releases them on finish, cancel or mode change. The guide offers
+  explicit STOP & SAVE and CANCEL paths; cancelling clears the frame buffer
+  without saving. The existing 120 ms analyzer throttle remains in place so
+  matching stays bounded. Pixel's pause-on-waypoint, steadiness and direction
+  cues inspired the guidance; no parallax/rotation solver or OEM parity is
+  claimed. 311 JVM tests pass (2 new); APK build and device verification remain
+  separate checks.

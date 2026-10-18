@@ -359,6 +359,9 @@ fun CameraScreen(
     var panoramaProgress by remember { mutableStateOf(panoramaCapture.progress()) }
     var panoramaDirection by remember { mutableStateOf(Direction.RIGHT) }
     var panoramaStreaming by remember { mutableStateOf(false) }
+    var panoramaStarting by remember { mutableStateOf(false) }
+    var panoramaAeLocked by remember { mutableStateOf(false) }
+    var panoramaAwbLocked by remember { mutableStateOf(false) }
     var panoramaPreview by remember { mutableStateOf<Bitmap?>(null) }
     val panoramaGuide = remember(panoramaDirection) {
         PanoramaGuide(forwardSign = if (panoramaDirection == Direction.RIGHT) -1f else 1f)
@@ -992,6 +995,9 @@ fun CameraScreen(
         if (previousMode == CameraMode.PANORAMA && mode != CameraMode.PANORAMA) {
             session.stopPanoramaStream()
             panoramaStreaming = false
+            panoramaStarting = false
+            panoramaAeLocked = false
+            panoramaAwbLocked = false
             panoramaCapture.reset()
             panoramaProgress = panoramaCapture.progress()
             panoramaPreview = null
@@ -1238,49 +1244,76 @@ fun CameraScreen(
     }
 
     fun capturePanoramaFrame() {
-        if (processingCapture || panoramaStreaming) return
+        if (processingCapture || panoramaStreaming || panoramaStarting) return
         panoramaCapture.reset()
         panoramaProgress = panoramaCapture.progress()
         panoramaPreview = null
         panoramaGuide.reset()
         panoramaGuideState = panoramaGuide.state()
+        panoramaStarting = true
         val expectedDirection = panoramaDirection.canvasShiftSign
         val directionLabel = panoramaDirection.name.lowercase(Locale.US)
-        val started = session.startPanoramaStream(
-            maxDimension = PanoramaCapture.DEFAULT_MAX_DIMENSION,
-            onFrame = { frame ->
-                val previousCount = panoramaCapture.frameCount
-                val updated = panoramaCapture.addFrame(
-                    frame.pixels,
-                    frame.width,
-                    frame.height,
-                    expectedDirection = expectedDirection,
-                )
-                val preview = if (updated.acceptedFrames > previousCount) {
-                    panoramaCapture.previewBitmap(PanoramaCapture.PREVIEW_MAX_WIDTH)
-                } else {
-                    null
-                }
-                coroutineScope.launch(Dispatchers.Main.immediate) {
-                    panoramaProgress = updated
-                    if (preview != null) panoramaPreview = preview
-                    status = when {
-                        updated.lastRejection == PanoramaCapture.Rejection.WRONG_DIRECTION -> "Wrong way · turn $directionLabel"
-                        updated.lastRejection == PanoramaCapture.Rejection.NO_MOVEMENT -> "Keep panning slowly"
-                        updated.acceptedFrames == 1 -> "Keep panning · image building"
-                        else -> "${updated.acceptedFrames} frames · ${updated.estimatedWidth}×${updated.estimatedHeight}"
+        session.setPanoramaCaptureLocks(true) { aeLocked, awbLocked, lockError ->
+            if (!panoramaStarting) {
+                session.setPanoramaCaptureLocks(false)
+                return@setPanoramaCaptureLocks
+            }
+            panoramaStarting = false
+            panoramaAeLocked = aeLocked
+            panoramaAwbLocked = awbLocked
+            if (lockError != null) {
+                status = "Exposure lock unavailable · continuing with auto exposure"
+            }
+            val started = session.startPanoramaStream(
+                maxDimension = PanoramaCapture.DEFAULT_MAX_DIMENSION,
+                onFrame = { frame ->
+                    val previousCount = panoramaCapture.frameCount
+                    val updated = panoramaCapture.addFrame(
+                        frame.pixels,
+                        frame.width,
+                        frame.height,
+                        expectedDirection = expectedDirection,
+                    )
+                    val preview = if (updated.acceptedFrames > previousCount) {
+                        panoramaCapture.previewBitmap(PanoramaCapture.PREVIEW_MAX_WIDTH)
+                    } else {
+                        null
                     }
-                }
-            },
-            onError = { error ->
-                coroutineScope.launch(Dispatchers.Main.immediate) {
-                    status = error.message ?: "Panorama frame failed"
-                }
-            },
-        )
-        if (started) {
-            panoramaStreaming = true
-            status = "Pan slowly $directionLabel · keep level"
+                    coroutineScope.launch(Dispatchers.Main.immediate) {
+                        panoramaProgress = updated
+                        if (preview != null) panoramaPreview = preview
+                        status = when (updated.lastRejection) {
+                            PanoramaCapture.Rejection.WRONG_DIRECTION -> "Wrong way · turn $directionLabel"
+                            PanoramaCapture.Rejection.NO_MOVEMENT -> "Keep panning · waiting for overlap"
+                            PanoramaCapture.Rejection.TOO_FAST -> "Slow down · keep 40%+ overlap"
+                            PanoramaCapture.Rejection.NONE -> when {
+                                updated.acceptedFrames == 1 -> "Keep panning · image building"
+                                else -> "${updated.acceptedFrames} keyframes · " +
+                                    "${updated.overlapPercent ?: 0}% overlap"
+                            }
+                            else -> "Frame skipped · keep panning steadily"
+                        }
+                    }
+                },
+                onError = { error ->
+                    coroutineScope.launch(Dispatchers.Main.immediate) {
+                        status = error.message ?: "Panorama frame failed"
+                    }
+                },
+            )
+            if (started) {
+                panoramaStreaming = true
+                val locks = buildList {
+                    if (aeLocked) add("AE")
+                    if (awbLocked) add("AWB")
+                }.joinToString("+").ifEmpty { "AUTO" }
+                status = "Pan slowly $directionLabel · $locks locked · keep level"
+            } else {
+                session.setPanoramaCaptureLocks(false)
+                panoramaAeLocked = false
+                panoramaAwbLocked = false
+                status = "Panorama stream unavailable"
+            }
         }
     }
 
@@ -1288,6 +1321,8 @@ fun CameraScreen(
         if (processingCapture) return
         session.stopPanoramaStream()
         panoramaStreaming = false
+        panoramaAeLocked = false
+        panoramaAwbLocked = false
         val capturedProgress = panoramaCapture.progress()
         panoramaProgress = capturedProgress
         if (capturedProgress.acceptedFrames < 2) {
@@ -1322,6 +1357,24 @@ fun CameraScreen(
                 finishModeCapture(error.message ?: "Panorama stitch failed")
             }
         }
+    }
+
+    fun cancelPanorama() {
+        if (panoramaStarting) {
+            panoramaStarting = false
+            session.setPanoramaCaptureLocks(false)
+        }
+        session.stopPanoramaStream()
+        panoramaStreaming = false
+        panoramaStarting = false
+        panoramaAeLocked = false
+        panoramaAwbLocked = false
+        panoramaCapture.reset()
+        panoramaProgress = panoramaCapture.progress()
+        panoramaPreview = null
+        panoramaGuide.reset()
+        panoramaGuideState = panoramaGuide.state()
+        status = "Panorama cancelled"
     }
 
     DisposableEffect(panoramaStreaming, panoramaGuide, sensorManager) {
@@ -1609,7 +1662,7 @@ fun CameraScreen(
 
     /** Applies a mode change to the session; shared by the carousel and shortcut launches. */
     fun switchMode(selected: CameraMode) {
-        if (recording || specialStarting || processingCapture || panoramaStreaming) {
+        if (recording || specialStarting || processingCapture || panoramaStreaming || panoramaStarting) {
             status = "Stop recording before switching modes"
         } else if (selected == CameraMode.MACRO && !capabilities.macroFocusSupported) {
             status = "This camera does not expose macro autofocus"
@@ -1890,7 +1943,7 @@ fun CameraScreen(
         if (mode == CameraMode.PANORAMA) {
             val guideText = when (panoramaGuideState.hint) {
                 PanoramaGuide.Hint.READY -> "START SWEEP"
-                PanoramaGuide.Hint.PAN -> "FOLLOW THE LINE · KEEP LEVEL"
+                PanoramaGuide.Hint.PAN -> "FOLLOW THE DOTS · KEEP LEVEL"
                 PanoramaGuide.Hint.TOO_FAST -> "SLOW DOWN"
                 PanoramaGuide.Hint.WRONG_WAY -> "TURN ${panoramaDirection.name}"
                 PanoramaGuide.Hint.HOLD_LEVEL -> "HOLD LEVEL"
@@ -1933,20 +1986,42 @@ fun CameraScreen(
                     )
                     val progress = if (panoramaStreaming) panoramaGuideState.sweepProgress else 0f
                     val x = size.width * progress
+                    // Pixel Camera-style waypoints make the angular goal
+                    // tangible; use 5 equal steps rather than implying every
+                    // analyzer frame is a saved panorama frame.
+                    for (waypoint in 1..4) {
+                        val waypointX = size.width * waypoint / 5f
+                        drawCircle(
+                            color = if (progress >= waypoint / 5f) White else DimWhite,
+                            radius = 3.dp.toPx(),
+                            center = Offset(waypointX, y),
+                        )
+                    }
                     drawCircle(color = Black, radius = 8.dp.toPx(), center = Offset(x, y))
                     drawCircle(color = White, radius = 6.dp.toPx(), center = Offset(x, y))
                 }
                 Text(
                     text = if (panoramaStreaming) {
                         "${(panoramaGuideState.sweepProgress * 100).roundToInt()}% · " +
-                            "${panoramaProgress.acceptedFrames}/${panoramaProgress.maxFrames} FRAMES"
+                            "${panoramaProgress.acceptedFrames} KEYFRAMES · " +
+                            "${panoramaProgress.overlapPercent?.let { "$it% OVERLAP" } ?: "FINDING OVERLAP"}"
                     } else {
-                        "${panoramaProgress.acceptedFrames}/${panoramaProgress.maxFrames} FRAMES"
+                        "${panoramaProgress.acceptedFrames} KEYFRAMES · 40–65% OVERLAP"
                     },
                     color = White,
                     fontFamily = FontFamily.Monospace,
                     style = MaterialTheme.typography.labelSmall,
                 )
+                if (panoramaStreaming) {
+                    Text(
+                        text = "AE ${if (panoramaAeLocked) "LOCK" else "AUTO"} · " +
+                            "WB ${if (panoramaAwbLocked) "LOCK" else "AUTO"} · " +
+                            "${(panoramaGuideState.speedDegreesPerSecond).roundToInt()}°/S",
+                        color = DimWhite,
+                        fontFamily = FontFamily.Monospace,
+                        style = MaterialTheme.typography.labelSmall,
+                    )
+                }
             }
         }
 
@@ -2520,13 +2595,13 @@ fun CameraScreen(
                         ToggleChip(
                             label = "SWEEP ${panoramaDirection.name}",
                             active = true,
-                            enabled = !processingCapture && !panoramaStreaming,
+                            enabled = !processingCapture && !panoramaStreaming && !panoramaStarting,
                             onClick = {
                                 panoramaDirection = panoramaDirection.opposite
                             },
                         )
                         Text(
-                            text = "${panoramaProgress.acceptedFrames}/${panoramaProgress.maxFrames} FRAMES",
+                            text = "${panoramaProgress.acceptedFrames} KEYFRAMES",
                             color = DimWhite,
                             fontFamily = FontFamily.Monospace,
                             style = MaterialTheme.typography.labelSmall,
@@ -2537,6 +2612,14 @@ fun CameraScreen(
                                 active = panoramaStreaming,
                                 enabled = !processingCapture,
                                 onClick = { finishPanorama() },
+                            )
+                        }
+                        if (panoramaStreaming || panoramaStarting) {
+                            ToggleChip(
+                                label = "CANCEL",
+                                active = false,
+                                enabled = !processingCapture,
+                                onClick = { cancelPanorama() },
                             )
                         }
                     }

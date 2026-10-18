@@ -115,6 +115,15 @@ class PanoramaPlanTest {
         assertEquals(0f, PanoramaPlan.minShiftFraction(0.3f, tolerance = 0.9f), 1e-3f)
     }
 
+    @Test
+    fun keyframeCadenceKeepsThirtyFiveToSixtyPercentOfEachFrameOverlapping() {
+        val range = PanoramaPlan.keyframeShiftRange(1_000)
+        assertEquals(350, range.first)
+        assertEquals(600, range.last)
+        assertEquals(65, PanoramaPlan.overlapPercent(1_000, range.first))
+        assertEquals(40, PanoramaPlan.overlapPercent(1_000, range.last))
+    }
+
     // ------------------------------------------------------------ direction
 
     @Test

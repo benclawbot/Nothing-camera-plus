@@ -477,8 +477,9 @@ class PanoramaStitcherTest {
         assertEquals(200, afterFirst.estimatedWidth)
         assertTrue(!afterFirst.isFull)
 
-        val afterSecond = capture.addFrame(render(50, width, height), width, height)
+        val afterSecond = capture.addFrame(render(90, width, height), width, height)
         assertEquals(2, afterSecond.acceptedFrames)
+        assertEquals(55, afterSecond.overlapPercent)
         assertTrue("expected the canvas to grow by the measured shift, got ${afterSecond.estimatedWidth}",
             afterSecond.estimatedWidth > 200)
         assertTrue(afterSecond.progressFraction > 0f)
@@ -495,14 +496,33 @@ class PanoramaStitcherTest {
         assertEquals(1, noMovement.acceptedFrames)
         assertEquals(PanoramaCapture.Rejection.NO_MOVEMENT, noMovement.lastRejection)
 
-        val wrongDirection = capture.addFrame(render(-25, width, height), width, height, Direction.RIGHT.canvasShiftSign)
+        val wrongDirection = capture.addFrame(render(-90, width, height), width, height, Direction.RIGHT.canvasShiftSign)
         assertEquals(1, wrongDirection.acceptedFrames)
         assertEquals(PanoramaCapture.Rejection.WRONG_DIRECTION, wrongDirection.lastRejection)
 
-        val rightDirection = capture.addFrame(render(25, width, height), width, height, Direction.RIGHT.canvasShiftSign)
+        val rightDirection = capture.addFrame(render(90, width, height), width, height, Direction.RIGHT.canvasShiftSign)
         assertEquals(2, rightDirection.acceptedFrames)
         assertEquals(Direction.RIGHT, rightDirection.direction)
         assertTrue(rightDirection.estimatedWidth > width)
+    }
+
+    @Test
+    fun liveCaptureRejectsKeyframesThatWouldLeaveTooLittleOverlap() {
+        val capture = PanoramaCapture(maxDimension = 300)
+        val width = 200
+        val height = 100
+        capture.addFrame(render(0, width, height), width, height, Direction.RIGHT.canvasShiftSign)
+
+        val tooFast = capture.addFrame(
+            render(130, width, height),
+            width,
+            height,
+            expectedDirection = Direction.RIGHT.canvasShiftSign,
+        )
+
+        assertEquals(1, tooFast.acceptedFrames)
+        assertEquals(PanoramaCapture.Rejection.TOO_FAST, tooFast.lastRejection)
+        assertEquals(1, tooFast.rejectedFrames)
     }
 
     @Test
@@ -511,7 +531,7 @@ class PanoramaStitcherTest {
         val width = 160
         val height = 80
         capture.addFrame(render(0, width, height), width, height)
-        val progress = capture.addFrame(render(40, width, height), width, height)
+        val progress = capture.addFrame(render(64, width, height), width, height)
 
         val preview = requireNotNull(capture.previewPixels(400))
 
@@ -527,8 +547,8 @@ class PanoramaStitcherTest {
         val height = 50
 
         capture.addFrame(render(0, width, height), width, height)
-        capture.addFrame(render(20, width, height), width, height)
-        val full = capture.addFrame(render(40, width, height), width, height)
+        capture.addFrame(render(40, width, height), width, height)
+        val full = capture.addFrame(render(80, width, height), width, height)
 
         assertEquals(2, full.acceptedFrames)
         assertEquals(1, full.rejectedFrames)
@@ -580,7 +600,7 @@ class PanoramaStitcherTest {
     fun captureFinishStitchesWhatWasCollectedAndClearsTheSweep() {
         val width = 160
         val height = 80
-        val shift = 40
+        val shift = 64
         val capture = PanoramaCapture(maxDimension = 400)
         capture.addFrame(render(0, width, height), width, height)
         capture.addFrame(render(shift, width, height), width, height)

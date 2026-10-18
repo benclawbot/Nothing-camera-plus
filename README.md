@@ -49,7 +49,7 @@ Current release: **v1.2.0** (`versionCode 5`), debug-signed, `minSdk 33` (Androi
 | Gallery app picker | Implemented; device verification pending |
 | In-app video playback | Implemented; device verification pending |
 | Gallery hand-off and in-app gallery | Done, device-verified |
-| 309 JVM unit tests | Green |
+| 311 JVM unit tests | Green |
 
 Feature-by-feature status against the original-app inventory, including what is a clean-room substitute rather than a reproduction, is tracked in [notes/FEATURE-COVERAGE.md](notes/FEATURE-COVERAGE.md); device checks are logged in [notes/PLAN-v1.1.md](notes/PLAN-v1.1.md).
 
@@ -92,7 +92,7 @@ The carousel ships eleven entries: **PHOTO, PORTRAIT, BEAUTY, NIGHT, PANORAMA, M
 - **PORTRAIT** — CameraX BOKEH extension where the device advertises it (real depth lens blur); otherwise a documented software ellipse blur with an adjustable strength slider.
 - **BEAUTY** — CameraX FACE_RETOUCH extension when available; otherwise bounded software skin smoothing.
 - **NIGHT** — CameraX NIGHT extension when advertised; otherwise a bounded 4-frame alignment/merge fallback.
-- **PANORAMA** — continuous YUV frame sweep with a gyro-driven direction/level guide and a progressive stitched strip; clean-room multi-band horizontal alignment + feathering.
+- **PANORAMA** — continuous YUV sweep with gyro direction/level waypoints, Camera2 AE/AWB lock where advertised, 35–60% overlap keyframes, slow-down/turn-back guidance, progressive stitch preview and explicit save/cancel actions. The clean-room stitch remains translation-only.
 - **MACRO** — Camera2 macro AF mode when the lens reports it.
 - **QR** — local ZXing barcode analyzer with open/copy actions for the result; the settings sheet can widen the search from QR only to the 2D matrix codes or every format ZXing knows.
 - **SLO-MO / TIME-LAPSE** — Camera2 constrained high-speed recording and MediaRecorder interval capture (see below). Slo-mo rates are hardware-reported; the Camera2 time-lapse path is bounded to FHD-or-smaller for reliable prepare/record.
@@ -156,7 +156,9 @@ A clean-room tracking autofocus for both photo modes and video:
 
 ### Panorama
 
-- Continuous ImageAnalysis sweep with a gyro-driven progress/level/speed guide and a live stitched preview strip.
+- Continuous ImageAnalysis sweep with a gyro-driven waypoint/level/speed guide, and AE/AWB locked for the sweep where the camera advertises those controls.
+- Keyframes are accepted at 35–60% frame movement (40–65% overlap) rather than every small preview shift; moving too fast produces a slow-down warning, and a stopped/duplicate frame waits for more movement.
+- Progressive stitched strip shows measured overlap; direction is explicit, and an active sweep can be stopped-and-saved or cancelled.
 - Frames are bounded/downsampled and aligned with three-band horizontal correlation and feathered seams; rotation correction and OEM-grade registration are intentionally absent.
 
 ### Portrait & Beauty
@@ -238,7 +240,7 @@ Requirements:
 
 ```bash
 ./gradlew :app:assembleDebug       # debug APK
-./gradlew :app:testDebugUnitTest   # JVM unit tests (309)
+./gradlew :app:testDebugUnitTest   # JVM unit tests (311)
 ```
 
 `local.properties` (git-ignored) points at your SDK:
@@ -269,7 +271,7 @@ Runtime requirement: Android 13 or newer (`minSdk 33` — the preview-parity GL 
   - `ui/CameraScreen.kt`, `ui/GalleryScreen.kt`, `ui/FocusControls.kt`, `ui/FocusAssist.kt`, `ui/CompositionOverlay.kt`, `ui/ProcessingSheet.kt`, `ui/CameraPlusApp.kt`, `ui/ViewfinderOverlays.kt`, `ui/GhostImage.kt`, `ui/VoiceCountdown.kt`, `ui/theme/Theme.kt` — Compose UI
   - `processing/` — software still pipeline (`ImageProcessor` pure math, `JpegProcessor` glue, `WatermarkRenderer`)
   - `settings/` — capture/processing/watermark preference models, the preset codec and stores
-- `app/src/test/` — JVM unit tests (309)
+- `app/src/test/` — JVM unit tests (311)
 - `dist/` — built APKs
 
 ## License

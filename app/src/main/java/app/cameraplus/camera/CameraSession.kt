@@ -1388,6 +1388,46 @@ class CameraSession(
     )
 
     /**
+     * Locks exposure and white balance for the panorama burst where the
+     * camera advertises Camera2's lock controls. This avoids brightness/color
+     * bands between neighboring frames. Unsupported locks are reported as
+     * false, but do not prevent panorama capture.
+     */
+    fun setPanoramaCaptureLocks(
+        enabled: Boolean,
+        onComplete: (aeLocked: Boolean, awbLocked: Boolean, error: Exception?) -> Unit = { _, _, _ -> },
+    ) {
+        val camera = boundCamera ?: run {
+            onComplete(false, false, IllegalStateException("Camera is not ready"))
+            return
+        }
+        val info = Camera2CameraInfo.from(camera.cameraInfo)
+        val aeAvailable = info.getCameraCharacteristic(CameraCharacteristics.CONTROL_AE_LOCK_AVAILABLE) == true
+        val awbAvailable = info.getCameraCharacteristic(CameraCharacteristics.CONTROL_AWB_LOCK_AVAILABLE) == true
+        if (!aeAvailable && !awbAvailable) {
+            onComplete(false, false, null)
+            return
+        }
+        val options = CaptureRequestOptions.Builder().apply {
+            if (aeAvailable) setCaptureRequestOption(CaptureRequest.CONTROL_AE_LOCK, enabled)
+            if (awbAvailable) setCaptureRequestOption(CaptureRequest.CONTROL_AWB_LOCK, enabled)
+        }.build()
+        val future = runCatching {
+            Camera2CameraControl.from(camera.cameraControl).setCaptureRequestOptions(options)
+        }.getOrElse {
+            onComplete(false, false, it.asException())
+            return
+        }
+        future.addListener(
+            {
+                val error = runCatching { future.get() }.exceptionOrNull()?.asException()
+                onComplete(enabled && aeAvailable && error == null, enabled && awbAvailable && error == null, error)
+            },
+            mainExecutor,
+        )
+    }
+
+    /**
      * Attaches the live frame stream for a panorama sweep: every analysis
      * frame is converted to pose-upright ARGB (see [YuvFrameConverter]) and
      * handed to [onFrame] from the analysis thread.
@@ -1421,6 +1461,7 @@ class CameraSession(
         panoramaAnalyzer?.stop()
         panoramaAnalyzer = null
         panoramaAnalysis?.clearAnalyzer()
+        setPanoramaCaptureLocks(enabled = false)
     }
 
     /**
