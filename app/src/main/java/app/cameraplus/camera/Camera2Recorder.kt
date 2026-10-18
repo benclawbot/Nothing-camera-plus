@@ -16,7 +16,6 @@ import android.hardware.camera2.CaptureRequest
 import android.hardware.camera2.params.StreamConfigurationMap
 import android.media.MediaRecorder
 import android.net.Uri
-import android.os.Environment
 import android.os.Handler
 import android.os.HandlerThread
 import android.os.Looper
@@ -28,6 +27,7 @@ import android.view.Surface
 import android.view.TextureView
 import android.view.WindowManager
 import androidx.core.content.ContextCompat
+import app.cameraplus.media.MediaPaths
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -59,7 +59,7 @@ import kotlinx.coroutines.withTimeoutOrNull
  * frame rate, so a frame every four seconds plays back 120x faster than it
  * happened.
  *
- * Both save into MediaStore `Movies/Camera+` as MPEG-4/H.264 and return the
+ * Both save into MediaStore `DCIM/Camera` as MPEG-4/H.264 and return the
  * `Uri`, or `null` when the device cannot do what was asked (with [onError]
  * carrying the reason). Entries stay `IS_PENDING` while recording and are
  * published — or deleted, when nothing usable was written — when the clip ends.
@@ -663,7 +663,7 @@ class Camera2Recorder(
         val values = ContentValues().apply {
             put(MediaStore.Video.Media.DISPLAY_NAME, label)
             put(MediaStore.Video.Media.MIME_TYPE, MIME_TYPE)
-            put(MediaStore.Video.Media.RELATIVE_PATH, Environment.DIRECTORY_MOVIES + "/" + ALBUM)
+            put(MediaStore.Video.Media.RELATIVE_PATH, MediaPaths.RELATIVE_PATH)
             recordingLocation?.let { location ->
                 put(MediaStore.Video.Media.LATITUDE, location.latitude)
                 put(MediaStore.Video.Media.LONGITUDE, location.longitude)
@@ -905,7 +905,6 @@ class Camera2Recorder(
 
     private companion object {
         const val MIME_TYPE = "video/mp4"
-        const val ALBUM = "Camera+"
 
         /** Bounded waits: a stuck HAL must surface an error, not a hang. */
         const val OPEN_TIMEOUT_MS = 3_000L

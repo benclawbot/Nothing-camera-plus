@@ -240,7 +240,7 @@ fun ProcessingSheet(
                         )
                     }
                     Text(
-                        text = "Software stamps are clean-room generated; files use Camera+ media folders.",
+                        text = "Software stamps are clean-room generated; files use the camera's DCIM/Camera folder.",
                         color = White,
                         style = MaterialTheme.typography.labelSmall,
                         modifier = Modifier.padding(top = 8.dp),

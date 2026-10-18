@@ -22,6 +22,7 @@ Current release: **v1.2.0** (`versionCode 5`), debug-signed, `minSdk 33` (Androi
 | Focal-length zoom labels | Implemented; device verification pending |
 | Restore defaults | Implemented; device verification pending |
 | Watermark camera parameters | Implemented; device verification pending |
+| Captures in DCIM/Camera | Implemented; device verification pending |
 | Gallery hand-off and in-app gallery | Done, device-verified |
 | 213 JVM unit tests | Green |
 
@@ -62,7 +63,8 @@ The carousel ships eleven entries: **PHOTO, PORTRAIT, BEAUTY, NIGHT, PANORAMA, M
 - Continuous shot: hold the shutter to queue a burst of up to 10 stills; releasing stops it. PHOTO and EXPERT only — the self-timer and the special pipelines are refused with a status note.
 - **Touch shutter** (tap the preview to capture) and **volume-key shutter**, both opt-in toggles; shutter-sound toggle.
 - Front-camera mirror capture preference, and opt-in geotagging written to MediaStore/EXIF.
-- Watermark stamp: on/off with date, time, location and author lines.
+- Captures are written to the standard **`DCIM/Camera`** folder (photos and videos) — the same place the original app saves — and the in-app gallery reads its own rows back by owner package.
+- Watermark stamp: on/off with date, time, location, author and camera-parameters lines.
 
 ### Subject tracking (new in v1.2.0)
 

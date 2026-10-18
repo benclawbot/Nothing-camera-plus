@@ -221,3 +221,11 @@
   (`JpegCameraParameters`); software merges (night, panorama) stamp the static
   lens values. Unknown parts are omitted rather than faked. 232 JVM tests pass
   (5 new); APK compiles. Device verification pending.
+- 2026-10-18: captures move to `DCIM/Camera`. Photos (JPEG, RAW+JPEG and the
+  software merges) and videos now land in the platform's standard camera
+  folder, matching the original (`CameraSet.CAMERA = "DCIM/Camera"`, whose
+  thumbnail scans look in `DCIM/Camera/`). `MediaPaths` is the single source of
+  the path; the in-app gallery switched from folder filtering to
+  `OWNER_PACKAGE_NAME`, because DCIM/Camera is shared with other camera apps
+  (it still finds shots made under the old `Pictures/Camera+` path). 232 JVM
+  tests pass; APK compiles. Device verification pending.

@@ -55,6 +55,7 @@ import androidx.camera.view.PreviewView
 import androidx.core.content.ContextCompat
 import androidx.exifinterface.media.ExifInterface
 import androidx.lifecycle.LifecycleOwner
+import app.cameraplus.media.MediaPaths
 import app.cameraplus.processing.CameraParameters
 import app.cameraplus.processing.JpegProcessor
 import app.cameraplus.processing.WatermarkRenderer
@@ -70,7 +71,7 @@ import kotlin.math.hypot
 /**
  * Thin wrapper around CameraX: binds Preview + ImageCapture (or Recorder for
  * video) to a [PreviewView] for the given lifecycle, and saves media through
- * MediaStore (Pictures/Camera+ and Movies/Camera+).
+ * MediaStore (DCIM/Camera).
  *
  * Instant-shutter behaviour (M2): when the device supports private
  * reprocessing, flash is off, RAW is off and no manual controls are active,
@@ -1139,7 +1140,7 @@ class CameraSession(
         }
     }
 
-    /** Saves a processed ARGB frame to Pictures/Camera+ as a JPEG. */
+    /** Saves a processed ARGB frame to DCIM/Camera as a JPEG. */
     fun saveArgbJpeg(
         pixels: IntArray,
         width: Int,
@@ -1156,7 +1157,7 @@ class CameraSession(
         val values = ContentValues().apply {
             put(MediaStore.Images.Media.DISPLAY_NAME, "$name.jpg")
             put(MediaStore.Images.Media.MIME_TYPE, "image/jpeg")
-            put(MediaStore.Images.Media.RELATIVE_PATH, "Pictures/Camera+")
+            put(MediaStore.Images.Media.RELATIVE_PATH, MediaPaths.RELATIVE_PATH)
         }
         val uri = context.contentResolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values)
             ?: run {
@@ -1191,7 +1192,7 @@ class CameraSession(
     }
 
     /**
-     * Starts a video recording into Movies/Camera+. Returns `false` when the
+     * Starts a video recording into DCIM/Camera. Returns `false` when the
      * session is not ready; validation and errors surface through [onError].
      */
     fun startRecording(
@@ -1207,7 +1208,7 @@ class CameraSession(
         val values = ContentValues().apply {
             put(MediaStore.Video.Media.DISPLAY_NAME, "CameraPlus_${System.currentTimeMillis()}.mp4")
             put(MediaStore.Video.Media.MIME_TYPE, "video/mp4")
-            put(MediaStore.Video.Media.RELATIVE_PATH, "Movies/Camera+")
+            put(MediaStore.Video.Media.RELATIVE_PATH, MediaPaths.RELATIVE_PATH)
             captureLocation?.let { location ->
                 put(MediaStore.Video.Media.LATITUDE, location.latitude)
                 put(MediaStore.Video.Media.LONGITUDE, location.longitude)
@@ -1271,12 +1272,12 @@ class CameraSession(
         val jpegValues = ContentValues().apply {
             put(MediaStore.Images.Media.DISPLAY_NAME, "$name.jpg")
             put(MediaStore.Images.Media.MIME_TYPE, "image/jpeg")
-            put(MediaStore.Images.Media.RELATIVE_PATH, "Pictures/Camera+")
+            put(MediaStore.Images.Media.RELATIVE_PATH, MediaPaths.RELATIVE_PATH)
         }
         val rawValues = ContentValues().apply {
             put(MediaStore.Images.Media.DISPLAY_NAME, "$name.dng")
             put(MediaStore.Images.Media.MIME_TYPE, "image/x-adobe-dng")
-            put(MediaStore.Images.Media.RELATIVE_PATH, "Pictures/Camera+")
+            put(MediaStore.Images.Media.RELATIVE_PATH, MediaPaths.RELATIVE_PATH)
         }
 
         val rawOptions = ImageCapture.OutputFileOptions
@@ -1337,7 +1338,7 @@ class CameraSession(
         val values = ContentValues().apply {
             put(MediaStore.Images.Media.DISPLAY_NAME, "$name.jpg")
             put(MediaStore.Images.Media.MIME_TYPE, "image/jpeg")
-            put(MediaStore.Images.Media.RELATIVE_PATH, "Pictures/Camera+")
+            put(MediaStore.Images.Media.RELATIVE_PATH, MediaPaths.RELATIVE_PATH)
         }
         val collection = MediaStore.Images.Media.EXTERNAL_CONTENT_URI
         val uri = context.contentResolver.insert(collection, values) ?: return null
@@ -1361,7 +1362,7 @@ class CameraSession(
         val values = ContentValues().apply {
             put(MediaStore.Images.Media.DISPLAY_NAME, "$name.jpg")
             put(MediaStore.Images.Media.MIME_TYPE, "image/jpeg")
-            put(MediaStore.Images.Media.RELATIVE_PATH, "Pictures/Camera+")
+            put(MediaStore.Images.Media.RELATIVE_PATH, MediaPaths.RELATIVE_PATH)
         }
         val options = ImageCapture.OutputFileOptions
             .Builder(context.contentResolver, MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values)

@@ -24,8 +24,8 @@ Closed since the last pass: touch shutter, screen flash, per-mode zoom caps
 look, and the new subject tracking. Closed 2026-10-18: launcher shortcuts
 (static core set plus a shortcut intent that reaches every mode), the
 hold-shutter continuous shot (10-frame cap, PHOTO/EXPERT only), focal-length
-zoom labels, the settings sheet's restore-defaults action and the watermark
-camera-parameters line.
+zoom labels, the settings sheet's restore-defaults action, the watermark
+camera-parameters line and `DCIM/Camera` storage for photos and videos.
 
 Genuine remaining gaps (clean-room implementable):
 
@@ -174,7 +174,7 @@ ArcSoft/morpho panorama, smile shutter (vendor face ML).
 | Pinch-to-zoom / zoom readout | 🟡 | implemented, hardware behavior unverified |
 | Aspect ratio picker | ✅ | |
 | Shutter sound | ✅ | explicit on/off; platform may enforce regional behavior |
-| Save position | 🟡 | fixed Camera+ MediaStore folders, no user-selectable path |
+| Save position | ✅ | photos and videos go to the standard `DCIM/Camera` folder, as the original does; still no user-selectable path or SD card |
 | Modes editor / reordering | ⬜ | cosmetic |
 | Watermark (brand/date/time/location/author/parameters) | ✅ | software stamp options including the original's camera-parameters line; original artwork/styles not mirrored |
 | AI scene detection | ⬜ | no local scene classifier |

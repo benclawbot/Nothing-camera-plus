@@ -16,10 +16,11 @@ import kotlinx.coroutines.withContext
  * Reads back what the camera saved, so the app has a real gallery instead of
  * sending people out to a system app (v1.1).
  *
- * Everything here reads the app's own MediaStore folders —
- * `Pictures/Camera+` and `Movies/Camera+` — so it only ever shows Camera+'s
- * shots, and thumbnails come from the platform's own `loadThumbnail`, which
- * is cheap enough to do while scrolling.
+ * Captures live in the standard `DCIM/Camera` folder — the same place the
+ * original app and other camera apps save — so that folder is shared. Rows are
+ * identified by `OWNER_PACKAGE_NAME` (this app) instead of by folder, which
+ * also keeps shots made before the move visible. Thumbnails come from the
+ * platform's own `loadThumbnail`, cheap enough to do while scrolling.
  */
 object MediaLibrary {
 
@@ -58,7 +59,6 @@ object MediaLibrary {
                         context = context,
                         collection = MediaStore.Images.Media.EXTERNAL_CONTENT_URI,
                         projection = IMAGE_PROJECTION,
-                        relativePath = "Pictures/Camera+",
                         limit = limit,
                     ),
                 )
@@ -67,7 +67,6 @@ object MediaLibrary {
                         context = context,
                         collection = MediaStore.Video.Media.EXTERNAL_CONTENT_URI,
                         projection = VIDEO_PROJECTION,
-                        relativePath = "Movies/Camera+",
                         limit = limit,
                     ),
                 )
@@ -79,11 +78,12 @@ object MediaLibrary {
         context: Context,
         collection: Uri,
         projection: Array<String>,
-        relativePath: String,
         limit: Int,
     ): List<Item> {
-        val selection = "${MediaStore.MediaColumns.RELATIVE_PATH} LIKE ?"
-        val selectionArgs = arrayOf("$relativePath%")
+        // The camera folder is shared with other camera apps, so scope to the
+        // rows this app inserted rather than to the folder.
+        val selection = "${MediaStore.MediaColumns.OWNER_PACKAGE_NAME} = ?"
+        val selectionArgs = arrayOf(context.packageName)
         val isVideo = collection == MediaStore.Video.Media.EXTERNAL_CONTENT_URI
         return runCatching {
             context.contentResolver.query(
