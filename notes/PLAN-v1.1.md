@@ -214,3 +214,10 @@
   watermark (and switches geotag off) in one tap, mirroring the original's
   settings-reset row. 227 JVM tests pass (4 new); APK compiles. Device verification
   pending.
+- 2026-10-18: watermark camera-parameters line. Stills can stamp the original's
+  EXIF-style line ("24MM F/1.9 1/50S ISO 123") behind a new "Camera params"
+  toggle: `CameraParameters` formats the 35 mm-equivalent focal from the
+  session, and aperture/shutter/ISO are read from the still's own EXIF
+  (`JpegCameraParameters`); software merges (night, panorama) stamp the static
+  lens values. Unknown parts are omitted rather than faked. 232 JVM tests pass
+  (5 new); APK compiles. Device verification pending.

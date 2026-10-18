@@ -17,6 +17,9 @@ import kotlin.math.max
  * It is deliberately generated from text (no manufacturer logo/artwork), and
  * only runs when a watermark is opted into. If optional processing fails, the
  * capture path saves the original JPEG rather than losing the photo.
+ *
+ * [parameters] adds the original's camera-parameters line
+ * ("24MM F/1.9 1/50S ISO 123") when that option is on and the values are known.
  */
 object WatermarkRenderer {
 
@@ -25,6 +28,7 @@ object WatermarkRenderer {
         options: WatermarkOptions,
         location: Location? = null,
         timestampMillis: Long = System.currentTimeMillis(),
+        parameters: CameraParameters? = null,
     ) {
         if (!options.enabled) return
         val lines = buildList {
@@ -33,6 +37,9 @@ object WatermarkRenderer {
             if (options.includeTime) add(SimpleDateFormat("HH:mm", Locale.US).format(Date(timestampMillis)))
             if (options.includeLocation && location != null) {
                 add(String.format(Locale.US, "%.5f, %.5f", location.latitude, location.longitude))
+            }
+            if (options.includeCameraParameters) {
+                parameters?.formatted()?.let { add(it) }
             }
             options.authorName.trim().takeIf { it.isNotEmpty() }?.let { add(it.take(MAX_AUTHOR_LENGTH)) }
         }

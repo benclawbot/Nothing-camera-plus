@@ -55,6 +55,7 @@ import androidx.camera.view.PreviewView
 import androidx.core.content.ContextCompat
 import androidx.exifinterface.media.ExifInterface
 import androidx.lifecycle.LifecycleOwner
+import app.cameraplus.processing.CameraParameters
 import app.cameraplus.processing.JpegProcessor
 import app.cameraplus.processing.WatermarkRenderer
 import app.cameraplus.settings.ProcessingSettings
@@ -754,6 +755,26 @@ class CameraSession(
         )
     }
 
+    /** 35 mm-equivalent focal at the current zoom, for capture metadata. */
+    private fun currentEquivalentFocalMm(): Float? =
+        lensLayout?.eqFocalMmFor(currentDisplayedZoom())
+
+    /**
+     * Static lens reporting (equivalent focal + aperture) for captures that
+     * carry no EXIF of their own — the software merge paths (night, panorama)
+     * whose output is a re-encoded ARGB frame.
+     */
+    private fun staticCameraParameters(): CameraParameters {
+        val bound = boundCamera?.cameraInfo?.let { Camera2CameraInfo.from(it) }
+        val aperture = bound
+            ?.getCameraCharacteristic(CameraCharacteristics.LENS_INFO_AVAILABLE_APERTURES)
+            ?.firstOrNull()
+        return CameraParameters(
+            focalMm = currentEquivalentFocalMm(),
+            aperture = aperture,
+        )
+    }
+
     /**
      * Applies a zoom *ratio* on the bound camera, clamped to its live range:
      * the HAL throws `IllegalArgumentException` on out-of-range requests and
@@ -1148,7 +1169,12 @@ class CameraSession(
                 val image = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
                 bitmap = image
                 image.setPixels(pixels, 0, width, 0, 0, width, height)
-                WatermarkRenderer.draw(image, watermarkOptions, captureLocation)
+                WatermarkRenderer.draw(
+                    image,
+                    watermarkOptions,
+                    captureLocation,
+                    parameters = if (watermarkOptions.enabled) staticCameraParameters() else null,
+                )
                 val saved = context.contentResolver.openOutputStream(uri)?.use { out ->
                     image.compress(Bitmap.CompressFormat.JPEG, 95, out)
                 } ?: false
@@ -1455,6 +1481,14 @@ class CameraSession(
                                 rotationDegrees = rotation,
                                 watermark = watermarkOptions,
                                 location = captureLocation,
+                                cameraParameters = if (
+                                    watermarkOptions.enabled &&
+                                    watermarkOptions.includeCameraParameters
+                                ) {
+                                    staticCameraParameters()
+                                } else {
+                                    null
+                                },
                             )
                         } ?: throw IllegalStateException("Could not open the output stream")
                         if (!processed) {

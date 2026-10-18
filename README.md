@@ -21,6 +21,7 @@ Current release: **v1.2.0** (`versionCode 5`), debug-signed, `minSdk 33` (Androi
 | Continuous shot (hold shutter) | Implemented; device verification pending |
 | Focal-length zoom labels | Implemented; device verification pending |
 | Restore defaults | Implemented; device verification pending |
+| Watermark camera parameters | Implemented; device verification pending |
 | Gallery hand-off and in-app gallery | Done, device-verified |
 | 213 JVM unit tests | Green |
 
@@ -140,7 +141,7 @@ A clean-room tracking autofocus for both photo modes and video:
 
 ### Watermark
 
-- Optional stamp with date, time, location and author lines, rendered into the saved still.
+- Optional stamp with date, time, location, author and camera-parameters lines (35 mm-equivalent focal, aperture, shutter, ISO) rendered into the saved still. The parameters come from the still's own EXIF plus the session's lens data; parts the device does not report are left out rather than faked.
 
 ### Gallery
 

@@ -12,6 +12,7 @@ class WatermarkOptionsStore(context: Context) {
         includeDate = prefs.getBoolean(KEY_DATE, true),
         includeTime = prefs.getBoolean(KEY_TIME, true),
         includeLocation = prefs.getBoolean(KEY_LOCATION, false),
+        includeCameraParameters = prefs.getBoolean(KEY_PARAMS, true),
         authorName = prefs.getString(KEY_AUTHOR, "").orEmpty().take(MAX_AUTHOR_LENGTH),
     )
 
@@ -21,6 +22,7 @@ class WatermarkOptionsStore(context: Context) {
             .putBoolean(KEY_DATE, options.includeDate)
             .putBoolean(KEY_TIME, options.includeTime)
             .putBoolean(KEY_LOCATION, options.includeLocation)
+            .putBoolean(KEY_PARAMS, options.includeCameraParameters)
             .putString(KEY_AUTHOR, options.authorName.take(MAX_AUTHOR_LENGTH))
             .apply()
     }
@@ -30,6 +32,7 @@ class WatermarkOptionsStore(context: Context) {
         const val KEY_DATE = "date"
         const val KEY_TIME = "time"
         const val KEY_LOCATION = "location"
+        const val KEY_PARAMS = "camera_parameters"
         const val KEY_AUTHOR = "author"
         const val MAX_AUTHOR_LENGTH = 32
     }

@@ -24,7 +24,8 @@ Closed since the last pass: touch shutter, screen flash, per-mode zoom caps
 look, and the new subject tracking. Closed 2026-10-18: launcher shortcuts
 (static core set plus a shortcut intent that reaches every mode), the
 hold-shutter continuous shot (10-frame cap, PHOTO/EXPERT only), focal-length
-zoom labels and the settings sheet's restore-defaults action.
+zoom labels, the settings sheet's restore-defaults action and the watermark
+camera-parameters line.
 
 Genuine remaining gaps (clean-room implementable):
 
@@ -32,7 +33,6 @@ Genuine remaining gaps (clean-room implementable):
 |---|---|---|
 | Expert histogram / pro meter | medium | needs live luma statistics in the viewfinder |
 | Default-gallery picker / user save position | small | gallery hand-off resolves packages dynamically today |
-| Watermark camera-parameters line | small | date/time/location/author already ship |
 | In-app video playback | medium | videos hand off to the system player |
 | Video encoder picker (H.264 / H.265) | medium | CameraX Recorder picks the codec; Camera2 recorder path needed |
 | Video HDR / SHDR toggles | medium | device/extension dependent |
@@ -176,7 +176,7 @@ ArcSoft/morpho panorama, smile shutter (vendor face ML).
 | Shutter sound | ✅ | explicit on/off; platform may enforce regional behavior |
 | Save position | 🟡 | fixed Camera+ MediaStore folders, no user-selectable path |
 | Modes editor / reordering | ⬜ | cosmetic |
-| Watermark (brand/date/time/location/author) | 🟡 | software stamp options; camera-parameter watermark and original styles absent |
+| Watermark (brand/date/time/location/author/parameters) | ✅ | software stamp options including the original's camera-parameters line; original artwork/styles not mirrored |
 | AI scene detection | ⬜ | no local scene classifier |
 | Colour mode natural/vivid | 🟡 | six clean-room saved/preview looks; no scene-driven original Colour Mode |
 | Presets / user LUT import | ⬜ | no LUT import/export |
@@ -323,7 +323,7 @@ unit-tested math component does not count as hardware feature parity.
 | Morpho/Tetras filter packs and filter-strength picker | 🚫 | vendor renderers/assets intentionally excluded |
 | User LUT import / presets and preset sharing | ⬜ | no LUT import/export yet |
 | Black-and-white filter | ✅ | clean-room B&W look in the processing sheet |
-| Watermark on/off and logo/time/date/location/author options | 🟡 | software text stamp; camera parameters and original artwork/style absent |
+| Watermark on/off and logo/time/date/location/author/camera-parameters options | ✅ | software text stamp; camera parameters read from the still's EXIF plus session lens data; original artwork/style not mirrored |
 | Glyph mirror preference | ⬜ | `glyph_mirror` |
 | QR-code scanning | ✅ | local ZXing QR analyzer with open/copy actions; not every barcode type |
 | In-app recent gallery and photo viewer | 🟡 | gallery button hands off to the system gallery app (newest item); in-app grid/viewer kept as the no-gallery-app fallback |

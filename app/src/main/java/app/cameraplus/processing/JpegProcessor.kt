@@ -52,6 +52,7 @@ object JpegProcessor {
         rotationDegrees: Int = 0,
         watermark: WatermarkOptions = WatermarkOptions(),
         location: Location? = null,
+        cameraParameters: CameraParameters? = null,
     ): Boolean {
         val requiresColorPixels = settings != ProcessingSettings.NATURAL
         val maxPixels = when {
@@ -110,7 +111,18 @@ object JpegProcessor {
                     }
                 }
             }
-            WatermarkRenderer.draw(bitmap, watermark, location)
+            // The device's EXIF carries exposure/ISO/aperture; the session's
+            // parameters carry the 35 mm-equivalent focal (EXIF stores the
+            // physical focal). Missing parts are simply left out.
+            val parameters = cameraParameters?.let { reported ->
+                val exif = JpegCameraParameters.read(jpegBytes)
+                reported.copy(
+                    aperture = exif.aperture ?: reported.aperture,
+                    exposureSeconds = exif.exposureSeconds,
+                    iso = exif.iso,
+                )
+            }
+            WatermarkRenderer.draw(bitmap, watermark, location, parameters = parameters)
 
             bitmap.compress(Bitmap.CompressFormat.JPEG, JPEG_QUALITY, out)
         } catch (t: Throwable) {

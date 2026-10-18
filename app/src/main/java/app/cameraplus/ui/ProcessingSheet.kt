@@ -224,6 +224,13 @@ fun ProcessingSheet(
                         SettingsToggle("LOCATION TEXT", watermark.includeLocation) {
                             onWatermarkChange(watermark.copy(includeLocation = !watermark.includeLocation))
                         }
+                        SettingsToggle("CAMERA PARAMS", watermark.includeCameraParameters) {
+                            onWatermarkChange(
+                                watermark.copy(
+                                    includeCameraParameters = !watermark.includeCameraParameters,
+                                ),
+                            )
+                        }
                         OutlinedTextField(
                             value = watermark.authorName,
                             onValueChange = { onWatermarkChange(watermark.copy(authorName = it.take(32))) },
