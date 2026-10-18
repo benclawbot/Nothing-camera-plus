@@ -310,3 +310,15 @@
   left untouched. The settings sheet gains STRIP METADATA and the EXIF AUTHOR /
   EXIF COPYRIGHT fields. 278 JVM tests pass (5 new); APK compiles. Device
   verification pending.
+- 2026-10-18: presets and pinning. `CameraPreset` bundles the capture
+  preferences and the look; `PresetCodec` (pure, unit-tested) writes them as a
+  readable line-per-preset blob with percent-escaped tokens, and decoding is
+  tolerant both ways (unknown keys ignored, missing keys defaulted), so an
+  older or newer blob still loads. `PresetsStore` keeps that blob; the settings
+  sheet gained PRESETS (name, SAVE, APPLY, DELETE) and PIN TO TOP BAR. The pin
+  draws a chip in the viewfinder's top bar that reads out the current value and
+  cycles it on tap (`PinnedSetting` plus a generic `nextEntry()`, both
+  unit-tested). `currentPreferences()` became the single place the live
+  viewfinder surfaces and the sheet's preference object are joined, so no
+  preference can be dropped by one caller building the object by hand. 288 JVM
+  tests pass (10 new); APK compiles. Device verification pending.

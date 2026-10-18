@@ -35,6 +35,8 @@ import app.cameraplus.settings.ProcessingSettings
 import app.cameraplus.settings.PhotoFilter
 import app.cameraplus.settings.WatermarkOptions
 import app.cameraplus.settings.CapturePreferences
+import app.cameraplus.settings.CameraPreset
+import app.cameraplus.settings.PinnedSetting
 import app.cameraplus.camera.FlashChoice
 import app.cameraplus.camera.AntiBanding
 import app.cameraplus.camera.BarcodeScanning
@@ -79,9 +81,13 @@ fun ProcessingSheet(
     onPreferredGalleryChange: (String?) -> Unit,
     geotagEnabled: Boolean,
     onGeotagToggle: () -> Unit,
+    presets: List<CameraPreset>,
+    onPresetsChange: (List<CameraPreset>) -> Unit,
+    onApplyPreset: (CameraPreset) -> Unit,
     onDismiss: () -> Unit,
 ) {
     var section by remember { mutableStateOf(SettingsSection.PHOTO) }
+    var presetName by remember { mutableStateOf("") }
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     ModalBottomSheet(
         sheetState = sheetState,
@@ -347,6 +353,87 @@ fun ProcessingSheet(
                         onPreferredGalleryChange(
                             SystemGallery.galleryPackageForLabel(galleryApps, value),
                         )
+                    }
+                    SettingsChoices("PIN TO TOP BAR", capturePreferences.pinnedSetting.label,
+                        PinnedSetting.entries.map { it.label }) { value ->
+                        PinnedSetting.entries.firstOrNull { it.label == value }?.let {
+                            onCapturePreferencesChange(capturePreferences.copy(pinnedSetting = it))
+                        }
+                    }
+                    Column(modifier = Modifier.fillMaxWidth().padding(top = 16.dp)) {
+                        Text(
+                            text = "PRESETS",
+                            color = DimWhite,
+                            fontFamily = FontFamily.Monospace,
+                            letterSpacing = 2.sp,
+                            style = MaterialTheme.typography.labelSmall,
+                        )
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            OutlinedTextField(
+                                value = presetName,
+                                onValueChange = { presetName = it.take(24) },
+                                label = { Text("PRESET NAME") },
+                                singleLine = true,
+                                modifier = Modifier.weight(1f),
+                            )
+                            Text(
+                                text = "SAVE",
+                                color = if (presetName.isBlank()) DimWhite else White,
+                                fontFamily = FontFamily.Monospace,
+                                letterSpacing = 1.5.sp,
+                                style = MaterialTheme.typography.labelSmall,
+                                modifier = Modifier
+                                    .clickable(enabled = presetName.isNotBlank()) {
+                                        val name = presetName.trim()
+                                        // Re-saving under a name replaces it.
+                                        onPresetsChange(
+                                            presets.filterNot { it.name == name } +
+                                                CameraPreset(name, capturePreferences, settings),
+                                        )
+                                        presetName = ""
+                                    }
+                                    .padding(horizontal = 12.dp, vertical = 12.dp),
+                            )
+                        }
+                        Text(
+                            text = "A preset holds every capture setting and the look.",
+                            color = DimWhite,
+                            style = MaterialTheme.typography.labelSmall,
+                            modifier = Modifier.padding(bottom = 4.dp),
+                        )
+                        presets.forEach { preset ->
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                Text(
+                                    text = preset.name,
+                                    color = White,
+                                    style = MaterialTheme.typography.labelMedium,
+                                    modifier = Modifier.weight(1f),
+                                )
+                                Text(
+                                    text = "APPLY",
+                                    color = White,
+                                    fontFamily = FontFamily.Monospace,
+                                    letterSpacing = 1.5.sp,
+                                    style = MaterialTheme.typography.labelSmall,
+                                    modifier = Modifier
+                                        .clickable { onApplyPreset(preset) }
+                                        .padding(horizontal = 8.dp, vertical = 10.dp),
+                                )
+                                Text(
+                                    text = "DELETE",
+                                    color = White,
+                                    fontFamily = FontFamily.Monospace,
+                                    letterSpacing = 1.5.sp,
+                                    style = MaterialTheme.typography.labelSmall,
+                                    modifier = Modifier
+                                        .clickable { onPresetsChange(presets - preset) }
+                                        .padding(horizontal = 8.dp, vertical = 10.dp),
+                                )
+                            }
+                        }
                     }
                 }
             }

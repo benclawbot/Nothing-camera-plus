@@ -137,9 +137,13 @@ import app.cameraplus.camera.SessionMode
 import app.cameraplus.camera.StabilizationLevel
 import app.cameraplus.camera.StabilizationProfile
 import app.cameraplus.settings.ProcessingSettingsStore
+import app.cameraplus.settings.CameraPreset
 import app.cameraplus.settings.CapturePreferences
 import app.cameraplus.settings.CapturePreferencesStore
 import app.cameraplus.settings.GalleryPreferenceStore
+import app.cameraplus.settings.PinnedSetting
+import app.cameraplus.settings.PresetsStore
+import app.cameraplus.settings.nextEntry
 import app.cameraplus.settings.WatermarkOptions
 import app.cameraplus.settings.WatermarkOptionsStore
 import app.cameraplus.processing.ImageProcessor
@@ -235,6 +239,8 @@ fun CameraScreen(
         mutableStateOf(capturePreferencesStore.load())
     }
     val watermarkStore = remember(context) { WatermarkOptionsStore(context) }
+    val presetsStore = remember(context) { PresetsStore(context) }
+    var presets by remember { mutableStateOf(presetsStore.load()) }
     val galleryStore = remember(context) { GalleryPreferenceStore(context) }
     var processing by remember { mutableStateOf(store.load()) }
     var watermark by remember { mutableStateOf(watermarkStore.load()) }
@@ -576,6 +582,36 @@ fun CameraScreen(
         evIndex = session.setExposureCompensationIndex(if (options.keepExposure) evIndex else 0)
     }
 
+    /**
+     * The live capture preferences: the settings that have their own viewfinder
+     * surfaces are read from those (they change without the sheet), and every
+     * other field comes from the preference object the sheet last wrote. This
+     * is the single place the two halves are joined, so a new preference can
+     * never be silently dropped by one of the callers.
+     */
+    fun currentPreferences(): CapturePreferences = capturePreferences.copy(
+        flashChoice = flashChoice,
+        photoAspectRatio = photoAspectRatio,
+        photoResolution = photoResolution,
+        videoQuality = videoQuality,
+        videoFrameRate = videoFrameRate,
+        selfTimer = selfTimer,
+        mirrorCapture = mirrorCapture,
+        shutterSoundEnabled = shutterSoundEnabled,
+        volumeKeyShutter = volumeKeyShutter,
+        touchShutter = touchShutter,
+        histogramEnabled = histogramArmed,
+        zebrasEnabled = zebrasArmed,
+        peakingEnabled = peakingArmed,
+        ghostImage = ghostEnabled,
+        photoHdrEnabled = photoHdrEnabled,
+        timeLapseSpeed = timeLapseSpeed,
+        slowMotionFps = slowMotionFps,
+        whiteBalance = whiteBalance,
+        whiteBalanceKelvin = whiteBalanceKelvin,
+        portraitBlurLevel = bokehLevel,
+    )
+
     fun bindCameraX() {
         screenFlashView.setScreenFlashWindow(findActivity(context)?.window)
         val availableScreenFlash = screenFlashView.screenFlash
@@ -759,32 +795,71 @@ fun CameraScreen(
         whiteBalanceKelvin,
         bokehLevel,
     ) {
-        capturePreferencesStore.save(
-            capturePreferences.copy(
-                flashChoice = flashChoice,
-                photoAspectRatio = photoAspectRatio,
-                photoResolution = photoResolution,
-                videoQuality = videoQuality,
-                videoFrameRate = videoFrameRate,
-                selfTimer = selfTimer,
-                mirrorCapture = mirrorCapture,
-                shutterSoundEnabled = shutterSoundEnabled,
-                volumeKeyShutter = volumeKeyShutter,
-                touchShutter = touchShutter,
-                photoHdrEnabled = photoHdrEnabled,
-                timeLapseSpeed = timeLapseSpeed,
-                slowMotionFps = slowMotionFps,
-                whiteBalance = whiteBalance,
-                whiteBalanceKelvin = whiteBalanceKelvin,
-                portraitBlurLevel = bokehLevel,
-            ),
-        )
+        capturePreferencesStore.save(currentPreferences())
     }
 
     LaunchedEffect(status) {
         if (status != null) {
             delay(2400)
             status = null
+        }
+    }
+
+    /** A saved preset: the capture settings and the look, applied together. */
+    fun applyPreset(preset: CameraPreset) {
+        applyCapturePreferences(preset.capture)
+        processing = preset.processing
+        store.save(preset.processing)
+        status = "Preset: ${preset.name}"
+    }
+
+    /** The value the pinned top-bar chip shows for the setting it pins. */
+    fun pinnedValueLabel(pinned: PinnedSetting): String = when (pinned) {
+        PinnedSetting.NONE -> ""
+        PinnedSetting.ASPECT -> photoAspectRatio.label
+        PinnedSetting.SIZE -> photoResolution.label
+        PinnedSetting.FLASH -> flashChoice.label
+        PinnedSetting.LOOK -> processing.filter.label
+        PinnedSetting.TIMER -> selfTimer.label
+    }
+
+    /**
+     * Cycles the pinned setting from the top bar, so a value the user cares
+     * about (a 50 MP capture, the look, the timer) is one tap away instead of a
+     * trip through the settings sheet.
+     */
+    fun cyclePinnedSetting() {
+        when (capturePreferences.pinnedSetting) {
+            PinnedSetting.NONE -> Unit
+            PinnedSetting.ASPECT -> {
+                val next = photoAspectRatio.nextEntry()
+                applyCapturePreferences(capturePreferences.copy(photoAspectRatio = next))
+                status = "Aspect ${next.label}"
+            }
+            PinnedSetting.SIZE -> {
+                if (!capabilities.maximumPhotoResolutionSupported) {
+                    status = "This camera reports one photo size"
+                    return
+                }
+                val next = photoResolution.nextEntry()
+                applyCapturePreferences(capturePreferences.copy(photoResolution = next))
+                status = "Photo size ${next.label}"
+            }
+            PinnedSetting.FLASH -> {
+                val next = flashChoice.next(screenFlashAvailable)
+                applyCapturePreferences(capturePreferences.copy(flashChoice = next))
+                status = "Flash ${next.label}"
+            }
+            PinnedSetting.LOOK -> {
+                val next = processing.filter.nextEntry()
+                processing = processing.copy(filter = next)
+                store.save(processing)
+                status = "Look ${next.label}"
+            }
+            PinnedSetting.TIMER -> {
+                selfTimer = selfTimer.next()
+                status = "Timer ${selfTimer.label}"
+            }
         }
     }
 
@@ -1784,6 +1859,15 @@ fun CameraScreen(
                 }
             }
             Row(verticalAlignment = Alignment.CenterVertically) {
+                if (capturePreferences.pinnedSetting != PinnedSetting.NONE) {
+                    ToggleChip(
+                        label = "${capturePreferences.pinnedSetting.label} " +
+                            pinnedValueLabel(capturePreferences.pinnedSetting),
+                        active = true,
+                        enabled = !recording && !specialStarting,
+                        onClick = ::cyclePinnedSetting,
+                    )
+                }
                 if (mode == CameraMode.PHOTO) {
                     ToggleChip(
                         label = "TIMER ${selfTimer.label}",
@@ -2318,24 +2402,7 @@ fun CameraScreen(
                     processing = updated
                     store.save(updated)
                 },
-                capturePreferences = CapturePreferences(
-                    flashChoice = flashChoice,
-                    photoAspectRatio = photoAspectRatio,
-                    photoResolution = photoResolution,
-                    videoQuality = videoQuality,
-                    videoFrameRate = videoFrameRate,
-                    selfTimer = selfTimer,
-                    mirrorCapture = mirrorCapture,
-                    shutterSoundEnabled = shutterSoundEnabled,
-                    volumeKeyShutter = volumeKeyShutter,
-                    touchShutter = touchShutter,
-                    photoHdrEnabled = photoHdrEnabled,
-                    timeLapseSpeed = timeLapseSpeed,
-                    slowMotionFps = slowMotionFps,
-                    whiteBalance = whiteBalance,
-                    whiteBalanceKelvin = whiteBalanceKelvin,
-                    portraitBlurLevel = bokehLevel,
-                ),
+                capturePreferences = currentPreferences(),
                 supportedVideoFrameRates = capabilities.supportedVideoFrameRates,
                 maximumPhotoResolutionSupported = capabilities.maximumPhotoResolutionSupported,
                 availableAntiBanding = capabilities.availableAntiBanding,
@@ -2349,6 +2416,12 @@ fun CameraScreen(
                 onPreferredGalleryChange = { preferredGallery = it },
                 geotagEnabled = geotagEnabled,
                 onGeotagToggle = ::toggleGeotag,
+                presets = presets,
+                onPresetsChange = { updated ->
+                    presets = updated
+                    presetsStore.save(updated)
+                },
+                onApplyPreset = ::applyPreset,
                 onDismiss = { showProcessing = false },
             )
         }

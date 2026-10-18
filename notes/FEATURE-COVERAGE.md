@@ -70,6 +70,8 @@ Nothing community's own camera feedback threads (`nothing.community`).
 | Barcode types beyond QR (2D matrix, product codes) | GrapheneOS Secure Camera | Implemented; device verification pending |
 | Metadata stripping (GPS and device identity) | GrapheneOS Secure Camera | Implemented; device verification pending |
 | EXIF author / copyright stamping | Open Camera | Implemented; device verification pending |
+| Named camera presets (save / apply / delete) | Nothing forum request ("save my settings as a preset") | Implemented; device verification pending |
+| Pin a setting to the top bar | Nothing forum request ("50MP quality should be on the top bar") | Implemented; device verification pending |
 
 ---
 

@@ -55,6 +55,8 @@ data class CapturePreferences(
     val stripMetadata: Boolean = false,
     val exifAuthor: String = "",
     val exifCopyright: String = "",
+    /** Which setting the viewfinder top bar shows a one-tap chip for. */
+    val pinnedSetting: PinnedSetting = PinnedSetting.NONE,
 )
 
 class CapturePreferencesStore(context: Context) {
@@ -102,6 +104,10 @@ class CapturePreferencesStore(context: Context) {
         stripMetadata = prefs.getBoolean(KEY_STRIP_METADATA, false),
         exifAuthor = prefs.getString(KEY_EXIF_AUTHOR, "").orEmpty().take(64),
         exifCopyright = prefs.getString(KEY_EXIF_COPYRIGHT, "").orEmpty().take(64),
+        pinnedSetting = enumValue(
+            prefs.getString(KEY_PINNED_SETTING, null),
+            PinnedSetting.NONE,
+        ),
     )
 
     /** Persists only the tracking toggle; the rest of the sheet is untouched. */
@@ -167,6 +173,7 @@ class CapturePreferencesStore(context: Context) {
             .putBoolean(KEY_STRIP_METADATA, options.stripMetadata)
             .putString(KEY_EXIF_AUTHOR, options.exifAuthor.take(64))
             .putString(KEY_EXIF_COPYRIGHT, options.exifCopyright.take(64))
+            .putString(KEY_PINNED_SETTING, options.pinnedSetting.name)
             .apply()
     }
 
@@ -207,6 +214,7 @@ class CapturePreferencesStore(context: Context) {
         const val KEY_STRIP_METADATA = "strip_metadata"
         const val KEY_EXIF_AUTHOR = "exif_author"
         const val KEY_EXIF_COPYRIGHT = "exif_copyright"
+        const val KEY_PINNED_SETTING = "pinned_setting"
         val TIME_LAPSE_SPEEDS = setOf(15, 30, 60, 120, 240, 480, 960)
         val SLOW_MOTION_RATES = setOf(120, 240, 480)
 
