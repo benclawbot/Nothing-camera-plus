@@ -252,3 +252,15 @@
   The histogram rebinds like tracking and turns itself off with a status note
   when the camera cannot host an analysis stream. 240 JVM tests pass (6 new);
   APK compiles. Device verification pending.
+- 2026-10-18: zebra stripes and focus peaking. The analysis stream grew from
+  the histogram into the viewfinder's shared consumer
+  (`ViewfinderAnalyzer`, replacing `HistogramAnalyzer`): one luma extraction
+  per frame now feeds the histogram, a clipping map and an edge map.
+  `OverlayMasks` is the pure grid maths — 48x36 cells, a cell lights up when a
+  fifth of its pixels clip at either end or when it holds an edge — with
+  unit-tested row-run merging so the overlay draws one rectangle per run.
+  The zebras are drawn in the subject tracker's frame space
+  (`TrackingGeometry`), so the stripes sit on the clipped pixels. EXPERT gains
+  ZEBRAS and PEAKING chips beside HISTOGRAM; all three persist and share one
+  rebind. 249 JVM tests pass (9 new); APK compiles. Device verification
+  pending.

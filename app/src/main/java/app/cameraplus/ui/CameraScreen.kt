@@ -113,6 +113,7 @@ import app.cameraplus.camera.LensZoomPlan
 import app.cameraplus.camera.ManualControlPlan
 import app.cameraplus.camera.LumaHistogram
 import app.cameraplus.camera.ManualControls
+import app.cameraplus.camera.OverlayMasks
 import app.cameraplus.camera.CameraSession
 import app.cameraplus.camera.Camera2Recorder
 import app.cameraplus.camera.CaptureTimer
@@ -246,7 +247,10 @@ fun CameraScreen(
     var trackingPoint by remember { mutableStateOf<Offset?>(null) }
     var trackingConfidence by remember { mutableFloatStateOf(1f) }
     var histogram by remember { mutableStateOf<LumaHistogram?>(null) }
+    var overlayMasks by remember { mutableStateOf(OverlayMasks.EMPTY) }
     var histogramArmed by remember { mutableStateOf(capturePreferences.histogramEnabled) }
+    var zebrasArmed by remember { mutableStateOf(capturePreferences.zebrasEnabled) }
+    var peakingArmed by remember { mutableStateOf(capturePreferences.peakingEnabled) }
 
     // A metering ring that is not locked goes away on its own, like the
     // stock timer; a locked one stays until the next tap or mode switch.
@@ -293,14 +297,21 @@ fun CameraScreen(
         }
     }
 
-    // The histogram rides the same analysis stream, so it follows the mode and
-    // the expert preference the same way tracking does.
-    LaunchedEffect(mode, histogramArmed) {
-        val wanted = histogramArmed && mode == CameraMode.EXPERT
-        session.setHistogramEnabled(wanted) { error ->
-            status = error.message ?: "Could not change the histogram"
+    // The viewfinder readouts ride the same analysis stream, so they follow the
+    // mode and the expert preferences the same way tracking does.
+    LaunchedEffect(mode, histogramArmed, zebrasArmed, peakingArmed) {
+        val expert = mode == CameraMode.EXPERT
+        session.setViewfinderOverlays(
+            histogram = histogramArmed && expert,
+            zebras = zebrasArmed && expert,
+            peaking = peakingArmed && expert,
+        ) { error ->
+            status = error.message ?: "Could not change the viewfinder readouts"
         }
-        if (!wanted) histogram = null
+        if (!expert) {
+            histogram = null
+            overlayMasks = OverlayMasks.EMPTY
+        }
     }
 
     var capabilities by remember { mutableStateOf(SessionCapabilities()) }
@@ -478,6 +489,8 @@ fun CameraScreen(
         volumeKeyShutter = options.volumeKeyShutter
         touchShutter = options.touchShutter
         histogramArmed = options.histogramEnabled
+        zebrasArmed = options.zebrasEnabled
+        peakingArmed = options.peakingEnabled
         photoHdrEnabled = options.photoHdrEnabled && capabilities.hdrExtensionAvailable
         timeLapseSpeed = options.timeLapseSpeed
         slowMotionFps = options.slowMotionFps
@@ -511,7 +524,11 @@ fun CameraScreen(
         // The session must already know whether to include the tracking
         // analyzer when it binds.
         session.setSubjectTrackingEnabled(trackingArmed && mode.supportsSubjectTracking())
-        session.setHistogramEnabled(histogramArmed && mode == CameraMode.EXPERT)
+        session.setViewfinderOverlays(
+            histogram = histogramArmed && mode == CameraMode.EXPERT,
+            zebras = zebrasArmed && mode == CameraMode.EXPERT,
+            peaking = peakingArmed && mode == CameraMode.EXPERT,
+        )
         session.bind(
             previewView = previewView,
             onQrCode = { value ->
@@ -534,10 +551,16 @@ fun CameraScreen(
                 capturePreferencesStore.setSubjectTracking(false)
             },
             onHistogram = { stats -> histogram = stats },
-            onHistogramUnavailable = {
+            onOverlays = { masks -> overlayMasks = masks },
+            onViewfinderUnavailable = {
                 histogramArmed = false
+                zebrasArmed = false
+                peakingArmed = false
                 histogram = null
+                overlayMasks = OverlayMasks.EMPTY
                 capturePreferencesStore.setHistogram(false)
+                capturePreferencesStore.setZebras(false)
+                capturePreferencesStore.setPeaking(false)
             },
             onZslChanged = { active ->
                 status = if (active) "Instant shutter ready" else null
@@ -1495,6 +1518,12 @@ fun CameraScreen(
                     )
                 }
             }
+            if (mode == CameraMode.EXPERT && zebrasArmed) {
+                ZebraOverlay(masks = overlayMasks, modifier = Modifier.fillMaxSize())
+            }
+            if (mode == CameraMode.EXPERT && peakingArmed) {
+                PeakingOverlay(masks = overlayMasks, modifier = Modifier.fillMaxSize())
+            }
         }
 
         Row(
@@ -1792,6 +1821,8 @@ fun CameraScreen(
                         rawEnabled = rawEnabled,
                         rawSupported = capabilities.rawSupported,
                         histogramEnabled = histogramArmed,
+                        zebrasEnabled = zebrasArmed,
+                        peakingEnabled = peakingArmed,
                         whiteBalance = whiteBalance,
                         whiteBalanceKelvin = whiteBalanceKelvin,
                         onIsoChange = { isoGauge = it },
@@ -1833,6 +1864,18 @@ fun CameraScreen(
                             histogramArmed = next
                             capturePreferencesStore.setHistogram(next)
                             status = if (next) "Histogram on" else null
+                        },
+                        onZebrasToggle = {
+                            val next = !zebrasArmed
+                            zebrasArmed = next
+                            capturePreferencesStore.setZebras(next)
+                            status = if (next) "Zebra stripes on" else null
+                        },
+                        onPeakingToggle = {
+                            val next = !peakingArmed
+                            peakingArmed = next
+                            capturePreferencesStore.setPeaking(next)
+                            status = if (next) "Focus peaking on" else null
                         },
                     )
                     Spacer(Modifier.height(14.dp))
@@ -2268,6 +2311,8 @@ private fun ExpertControls(
     rawEnabled: Boolean,
     rawSupported: Boolean,
     histogramEnabled: Boolean,
+    zebrasEnabled: Boolean,
+    peakingEnabled: Boolean,
     whiteBalance: WhiteBalancePreset,
     whiteBalanceKelvin: Int,
     onIsoChange: (Float) -> Unit,
@@ -2278,6 +2323,8 @@ private fun ExpertControls(
     onCommit: () -> Unit,
     onRawToggle: () -> Unit,
     onHistogramToggle: () -> Unit,
+    onZebrasToggle: () -> Unit,
+    onPeakingToggle: () -> Unit,
 ) {
     Column(horizontalAlignment = Alignment.CenterHorizontally) {
         Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
@@ -2355,12 +2402,31 @@ private fun ExpertControls(
             onClick = onRawToggle,
         )
         Spacer(Modifier.height(6.dp))
-        ToggleChip(
-            label = "HISTOGRAM",
-            active = histogramEnabled,
-            enabled = true,
-            onClick = onHistogramToggle,
-        )
+        Row(
+            modifier = Modifier
+                .width(320.dp)
+                .horizontalScroll(rememberScrollState()),
+            horizontalArrangement = Arrangement.spacedBy(5.dp),
+        ) {
+            ToggleChip(
+                label = "HISTOGRAM",
+                active = histogramEnabled,
+                enabled = true,
+                onClick = onHistogramToggle,
+            )
+            ToggleChip(
+                label = "ZEBRAS",
+                active = zebrasEnabled,
+                enabled = true,
+                onClick = onZebrasToggle,
+            )
+            ToggleChip(
+                label = "PEAKING",
+                active = peakingEnabled,
+                enabled = true,
+                onClick = onPeakingToggle,
+            )
+        }
     }
 }
 

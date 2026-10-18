@@ -170,12 +170,15 @@ class CameraSession(
     private var onSubjectTrackingCleared: () -> Unit = {}
     private var onSubjectTrackingUnavailable: () -> Unit = {}
     private var onHistogram: (LumaHistogram) -> Unit = {}
-    private var onHistogramUnavailable: () -> Unit = {}
+    private var onOverlays: (OverlayMasks) -> Unit = {}
+    private var onViewfinderUnavailable: () -> Unit = {}
     private val analysisExecutor: Executor = Executors.newSingleThreadExecutor()
     private val subjectAnalyzer = SubjectTrackingAnalyzer()
     private var subjectTrackingEnabled = false
-    private val histogramAnalyzer = HistogramAnalyzer()
+    private val viewfinderAnalyzer = ViewfinderAnalyzer()
     private var histogramEnabled = false
+    private var zebrasEnabled = false
+    private var peakingEnabled = false
     private var lastTrackingMeterAt = 0L
     private var lastTrackingMeterX = 0f
     private var lastTrackingMeterY = 0f
@@ -249,7 +252,8 @@ class CameraSession(
         onSubjectTrackingCleared: () -> Unit = {},
         onSubjectTrackingUnavailable: () -> Unit = {},
         onHistogram: (LumaHistogram) -> Unit = {},
-        onHistogramUnavailable: () -> Unit = {},
+        onOverlays: (OverlayMasks) -> Unit = {},
+        onViewfinderUnavailable: () -> Unit = {},
         onError: (Exception) -> Unit = {},
     ) {
         suspended = false
@@ -264,10 +268,14 @@ class CameraSession(
         this.onSubjectTracked = onSubjectTracked
         this.onSubjectTrackingCleared = onSubjectTrackingCleared
         this.onSubjectTrackingUnavailable = onSubjectTrackingUnavailable
-        this.onHistogramUnavailable = onHistogramUnavailable
+        this.onViewfinderUnavailable = onViewfinderUnavailable
         this.onHistogram = onHistogram
-        histogramAnalyzer.onHistogram = { stats ->
+        this.onOverlays = onOverlays
+        viewfinderAnalyzer.onHistogram = { stats ->
             mainExecutor.execute { runCatching { onHistogram(stats) } }
+        }
+        viewfinderAnalyzer.onOverlays = { masks ->
+            mainExecutor.execute { runCatching { onOverlays(masks) } }
         }
         subjectAnalyzer.onSelected = { x, y, score ->
             mainExecutor.execute { handleTrackedPosition(x, y, score) }
@@ -557,14 +565,28 @@ class CameraSession(
     }
 
     /**
-     * Turns the expert histogram on or off. Like subject tracking this
-     * rebinds, because the analysis stream has to be part of the session when
-     * it is created.
+     * Turns the viewfinder readouts on or off in one step: the expert
+     * histogram, the zebra stripes and focus peaking. They share one analysis
+     * stream, and any change rebinds, because that stream has to be part of the
+     * session when it is created.
      */
-    fun setHistogramEnabled(enabled: Boolean, onError: (Exception) -> Unit = {}) {
-        if (histogramEnabled == enabled) return
-        histogramEnabled = enabled
-        histogramAnalyzer.enabled = enabled
+    fun setViewfinderOverlays(
+        histogram: Boolean,
+        zebras: Boolean,
+        peaking: Boolean,
+        onError: (Exception) -> Unit = {},
+    ) {
+        if (
+            histogram == histogramEnabled &&
+            zebras == zebrasEnabled &&
+            peaking == peakingEnabled
+        ) {
+            return
+        }
+        histogramEnabled = histogram
+        zebrasEnabled = zebras
+        peakingEnabled = peaking
+        applyAnalyzerFlags()
         rebind(onError)
     }
 
@@ -647,11 +669,20 @@ class CameraSession(
     private fun activeAnalyzers(): List<ImageAnalysis.Analyzer> {
         subjectAnalyzer.mirrorHorizontally = lensFacing == CameraSelector.LENS_FACING_FRONT
         subjectAnalyzer.setTrackingEnabled(subjectTrackingEnabled)
-        histogramAnalyzer.enabled = histogramEnabled
+        applyAnalyzerFlags()
         return buildList {
             if (subjectTrackingEnabled) add(subjectAnalyzer)
-            if (histogramEnabled) add(histogramAnalyzer)
+            if (viewfinderReadoutsEnabled()) add(viewfinderAnalyzer)
         }
+    }
+
+    private fun viewfinderReadoutsEnabled(): Boolean =
+        histogramEnabled || zebrasEnabled || peakingEnabled
+
+    private fun applyAnalyzerFlags() {
+        viewfinderAnalyzer.histogramEnabled = histogramEnabled
+        viewfinderAnalyzer.zebrasEnabled = zebrasEnabled
+        viewfinderAnalyzer.peakingEnabled = peakingEnabled
     }
 
     /** Builds the single analysis use case that feeds [analyzers]. */
@@ -1867,7 +1898,7 @@ class CameraSession(
                 // combination, keep the camera usable and turn those features
                 // off instead of failing.
                 val trackingWasOn = subjectTrackingEnabled
-                val histogramWasOn = histogramEnabled
+                val viewfinderWasOn = viewfinderReadoutsEnabled()
                 provider.unbindAll()
                 val withoutAnalysis = useCases.filterNot { it === analysis }
                 val analysisFreeConfig = buildUseCaseGroup(withoutAnalysis)
@@ -1889,18 +1920,20 @@ class CameraSession(
                         }
                         runCatching { onSubjectTrackingUnavailable() }
                     }
-                    if (histogramWasOn) {
+                    if (viewfinderWasOn) {
                         histogramEnabled = false
-                        histogramAnalyzer.enabled = false
+                        zebrasEnabled = false
+                        peakingEnabled = false
+                        applyAnalyzerFlags()
                         runCatching {
                             errorSink(
                                 IllegalStateException(
-                                    "The histogram is not supported with this camera",
+                                    "The viewfinder readouts are not supported with this camera",
                                     t,
                                 ),
                             )
                         }
-                        runCatching { onHistogramUnavailable() }
+                        runCatching { onViewfinderUnavailable() }
                     }
                 }
             }
@@ -1945,10 +1978,12 @@ class CameraSession(
                 subjectAnalyzer.setTrackingEnabled(false)
                 runCatching { onSubjectTrackingUnavailable() }
             }
-            if (histogramEnabled) {
+            if (viewfinderReadoutsEnabled()) {
                 histogramEnabled = false
-                histogramAnalyzer.enabled = false
-                runCatching { onHistogramUnavailable() }
+                zebrasEnabled = false
+                peakingEnabled = false
+                applyAnalyzerFlags()
+                runCatching { onViewfinderUnavailable() }
             }
         }
         if (mode == SessionMode.VIDEO && capture != null) videoSnapshotSupported = true

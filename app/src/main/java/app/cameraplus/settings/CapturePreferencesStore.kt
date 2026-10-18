@@ -23,6 +23,8 @@ data class CapturePreferences(
     val touchShutter: Boolean = false,
     val subjectTracking: Boolean = false,
     val histogramEnabled: Boolean = false,
+    val zebrasEnabled: Boolean = false,
+    val peakingEnabled: Boolean = false,
     val photoHdrEnabled: Boolean = false,
     val timeLapseSpeed: Int = 60,
     val slowMotionFps: Int = 120,
@@ -48,6 +50,8 @@ class CapturePreferencesStore(context: Context) {
         touchShutter = prefs.getBoolean(KEY_TOUCH_SHUTTER, false),
         subjectTracking = prefs.getBoolean(KEY_SUBJECT_TRACKING, false),
         histogramEnabled = prefs.getBoolean(KEY_HISTOGRAM, false),
+        zebrasEnabled = prefs.getBoolean(KEY_ZEBRAS, false),
+        peakingEnabled = prefs.getBoolean(KEY_PEAKING, false),
         photoHdrEnabled = prefs.getBoolean(KEY_HDR, false),
         timeLapseSpeed = prefs.getInt(KEY_TIME_LAPSE_SPEED, 60)
             .takeIf { it in TIME_LAPSE_SPEEDS } ?: 60,
@@ -69,6 +73,16 @@ class CapturePreferencesStore(context: Context) {
         prefs.edit().putBoolean(KEY_HISTOGRAM, enabled).apply()
     }
 
+    /** Persists only the zebra-stripe toggle. */
+    fun setZebras(enabled: Boolean) {
+        prefs.edit().putBoolean(KEY_ZEBRAS, enabled).apply()
+    }
+
+    /** Persists only the focus-peaking toggle. */
+    fun setPeaking(enabled: Boolean) {
+        prefs.edit().putBoolean(KEY_PEAKING, enabled).apply()
+    }
+
     fun save(options: CapturePreferences) {
         prefs.edit()
             .putString(KEY_FLASH, options.flashChoice.name)
@@ -83,6 +97,8 @@ class CapturePreferencesStore(context: Context) {
             .putBoolean(KEY_TOUCH_SHUTTER, options.touchShutter)
             .putBoolean(KEY_SUBJECT_TRACKING, options.subjectTracking)
             .putBoolean(KEY_HISTOGRAM, options.histogramEnabled)
+            .putBoolean(KEY_ZEBRAS, options.zebrasEnabled)
+            .putBoolean(KEY_PEAKING, options.peakingEnabled)
             .putBoolean(KEY_HDR, options.photoHdrEnabled)
             .putInt(KEY_TIME_LAPSE_SPEED, options.timeLapseSpeed)
             .putInt(KEY_SLOW_MOTION_FPS, options.slowMotionFps)
@@ -108,6 +124,8 @@ class CapturePreferencesStore(context: Context) {
         const val KEY_TOUCH_SHUTTER = "touch_shutter"
         const val KEY_SUBJECT_TRACKING = "subject_tracking"
         const val KEY_HISTOGRAM = "histogram"
+        const val KEY_ZEBRAS = "zebras"
+        const val KEY_PEAKING = "peaking"
         const val KEY_HDR = "photo_hdr"
         const val KEY_TIME_LAPSE_SPEED = "time_lapse_speed"
         const val KEY_SLOW_MOTION_FPS = "slow_motion_fps"

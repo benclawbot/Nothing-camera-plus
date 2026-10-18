@@ -48,6 +48,19 @@ ArcSoft/morpho panorama, smile shutter (vendor face ML).
 
 ---
 
+## Improvements beyond the original (informed by other camera apps and user feedback)
+
+Everything below is additive — the original app has no equivalent. Sources are
+the public feature sets of Open Camera and GrapheneOS Secure Camera, plus the
+Nothing community's own camera feedback threads (`nothing.community`).
+
+| Improvement | Source | Status |
+|---|---|---|
+| Zebra stripes for blown highlights + a wash for crushed blacks | Open Camera; Nothing forum exposure requests | Implemented; device verification pending |
+| Focus peaking for manual focus | Open Camera; Nothing forum request ("Focus Peaking") | Implemented; device verification pending |
+
+---
+
 ## Modes (the carousel)
 
 | Original | Camera+ | Note |
@@ -308,7 +321,7 @@ unit-tested math component does not count as hardware feature parity.
 | Long-press AF/AE lock | 🟡 | long-duration metering action; hardware behavior unverified |
 | On-viewfinder brightness/EV slider | 🟡 | CameraX exposure-compensation index; hardware behavior unverified |
 | Subject tracking (tap a subject, focus follows it) | ✅ | clean-room zero-mean NCC tracker (2026-10-17); top-bar toggle, reticle overlay, AF/AE metering follows the subject in photo modes and video; device-verified coordinate mapping and metering cadence |
-| Expert histogram and level meter | ✅ | live luma histogram (32 bars, mean, black/white clip percentages) in EXPERT behind a HISTOGRAM toggle; the composition level line is present. The original's separate level-meter widget and Pro-meter screen are not mirrored |
+| Expert histogram and level meter | ✅ | live luma histogram (32 bars, mean, black/white clip percentages) in EXPERT behind a HISTOGRAM toggle, plus ZEBRAS and PEAKING overlays sharing the same analysis stream; the composition level line is present. The original's separate level-meter widget and Pro-meter screen are not mirrored |
 | Lens stops from physical focal lengths (0.6x/1x/2x/…) | 🟡 | planner handles logical and separate cameras; actual phone inventory unverified |
 | Pinch-to-zoom and manual zoom across device range | 🟡 | implemented and clamped; range depends on hardware |
 | Original focal labels (14/24/28/35/50/85mm) | ✅ | Computed from HAL focal + sensor size (the original's own convention: 35 mm-equivalent, 43.27 mm diagonal); shown on zoom chips and the live readout; device unverified |
