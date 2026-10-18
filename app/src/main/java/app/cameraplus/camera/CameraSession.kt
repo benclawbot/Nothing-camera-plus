@@ -223,6 +223,8 @@ class CameraSession(
     private var photoResolution = PhotoResolution.STANDARD
     private var manualControls = ManualControls()
     private var macroEnabled = false
+    private var antiBandingMode = AntiBanding.AUTO
+    private var availableAntiBandingModes: List<AntiBanding> = listOf(AntiBanding.AUTO)
     private var zeroShutterLagSupported = false
     private var appliedCaptureMode = ImageCapture.CAPTURE_MODE_MINIMIZE_LATENCY
 
@@ -965,6 +967,37 @@ class CameraSession(
         if (mode != SessionMode.VIDEO) rebind(onError)
     }
 
+    /**
+     * Mains-flicker control: anti-banding is a capture-request option, so a
+     * change rebinds. A mode the camera does not advertise falls back to AUTO
+     * with a note rather than failing the session.
+     */
+    fun setAntiBanding(mode: AntiBanding, onError: (Exception) -> Unit = {}) {
+        if (antiBandingMode == mode) return
+        val usable = mode in availableAntiBandingModes
+        antiBandingMode = if (usable) mode else AntiBanding.AUTO
+        if (!usable && mode != AntiBanding.AUTO) {
+            onError(
+                IllegalStateException("${mode.label} anti-flicker is not reported by this camera"),
+            )
+        }
+        rebind(onError)
+    }
+
+    /** The anti-banding mode the session is currently asking for. */
+    fun currentAntiBanding(): AntiBanding = antiBandingMode
+
+    /**
+     * The Camera2 anti-banding code to request, or null for AUTO — the
+     * platform default, which is left untouched so a camera that dislikes the
+     * option is never sent it.
+     */
+    private fun antiBandingCode(): Int? = when (antiBandingMode) {
+        AntiBanding.AUTO -> null
+        AntiBanding.HZ_50 -> android.hardware.camera2.CameraMetadata.CONTROL_AE_ANTIBANDING_MODE_50HZ
+        AntiBanding.HZ_60 -> android.hardware.camera2.CameraMetadata.CONTROL_AE_ANTIBANDING_MODE_60HZ
+    }
+
     fun setMirrorCaptureEnabled(enabled: Boolean) {
         mirrorCaptureEnabled = enabled
     }
@@ -1693,11 +1726,17 @@ class CameraSession(
             desiredCaptureMode()
         }
 
-        val preview = Preview.Builder()
+        val previewBuilder = Preview.Builder()
             .setTargetRotation(Surface.ROTATION_0)
-            .build().also {
-                it.setSurfaceProvider(previewView.surfaceProvider)
-            }
+        antiBandingCode()?.let { code ->
+            Camera2Interop.Extender(previewBuilder).setCaptureRequestOption(
+                CaptureRequest.CONTROL_AE_ANTIBANDING_MODE,
+                code,
+            )
+        }
+        val preview = previewBuilder.build().also {
+            it.setSurfaceProvider(previewView.surfaceProvider)
+        }
         val baseSelector = selectorForCamera(targetId)
         val desiredExtension = if (mode == SessionMode.VIDEO) {
             ExtensionMode.NONE
@@ -1743,13 +1782,19 @@ class CameraSession(
                     ),
                 )
                 .build()
-            val stillCapture = ImageCapture.Builder()
+            val stillCaptureBuilder = ImageCapture.Builder()
                 .setCaptureMode(ImageCapture.CAPTURE_MODE_MINIMIZE_LATENCY)
                 // Still images are for this portrait-locked UI: pin the target
                 // rotation so the pipeline's baked rotation is deterministic
                 // (see [remainingRotation]).
                 .setTargetRotation(Surface.ROTATION_0)
-                .build()
+            antiBandingCode()?.let { code ->
+                Camera2Interop.Extender(stillCaptureBuilder).setCaptureRequestOption(
+                    CaptureRequest.CONTROL_AE_ANTIBANDING_MODE,
+                    code,
+                )
+            }
+            val stillCapture = stillCaptureBuilder.build()
                 .also { image ->
                     image.setCropAspectRatio(Rational(16, 9))
                     image.flashMode = ImageCapture.FLASH_MODE_OFF
@@ -1783,6 +1828,12 @@ class CameraSession(
                     } else {
                         CaptureRequest.NOISE_REDUCTION_MODE_OFF
                     },
+                )
+            }
+            antiBandingCode()?.let { code ->
+                Camera2Interop.Extender(videoBuilder).setCaptureRequestOption(
+                    CaptureRequest.CONTROL_AE_ANTIBANDING_MODE,
+                    code,
                 )
             }
             val built = videoBuilder.build()
@@ -1840,6 +1891,12 @@ class CameraSession(
                         ImageCapture.OUTPUT_FORMAT_JPEG
                     },
                 )
+            antiBandingCode()?.let { code ->
+                Camera2Interop.Extender(captureBuilder).setCaptureRequestOption(
+                    CaptureRequest.CONTROL_AE_ANTIBANDING_MODE,
+                    code,
+                )
+            }
             if (photoResolution == PhotoResolution.MAXIMUM) {
                 captureBuilder.setResolutionSelector(
                     ResolutionSelector.Builder()
@@ -2241,6 +2298,22 @@ class CameraSession(
         val opticalStabilization = characteristic(
             CameraCharacteristics.LENS_INFO_AVAILABLE_OPTICAL_STABILIZATION,
         )
+        val antiBandingModes = characteristic(
+            CameraCharacteristics.CONTROL_AE_AVAILABLE_ANTIBANDING_MODES,
+        )
+        val availableAntiBanding = AntiBandingSupport.available(
+            reportsAuto = antiBandingModes?.contains(
+                android.hardware.camera2.CameraMetadata.CONTROL_AE_ANTIBANDING_MODE_AUTO,
+            ) == true,
+            reports50 = antiBandingModes?.contains(
+                android.hardware.camera2.CameraMetadata.CONTROL_AE_ANTIBANDING_MODE_50HZ,
+            ) == true,
+            reports60 = antiBandingModes?.contains(
+                android.hardware.camera2.CameraMetadata.CONTROL_AE_ANTIBANDING_MODE_60HZ,
+            ) == true,
+        )
+        availableAntiBandingModes = availableAntiBanding
+        if (antiBandingMode !in availableAntiBanding) antiBandingMode = AntiBanding.AUTO
         val boundId = bound?.cameraId
         val flags = boundId?.let { cameraFlags[it] }
         val layout = lensLayout
@@ -2271,6 +2344,7 @@ class CameraSession(
                     ?: 1f,
                 // RAW follows the lens in use, not just the first back camera.
                 rawSupported = flags?.raw == true,
+                availableAntiBanding = availableAntiBanding,
                 stabilization = StabilizationProfile.choose(
                     previewSupported = videoStabilization?.contains(
                         android.hardware.camera2.CameraMetadata

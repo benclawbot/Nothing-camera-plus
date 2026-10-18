@@ -22,6 +22,8 @@ data class SessionCapabilities(
     val minDisplayedZoom: Float = 1f,
     val maxDisplayedZoom: Float = 1f,
     val rawSupported: Boolean = false,
+    /** Anti-banding modes the camera advertises (always at least AUTO). */
+    val availableAntiBanding: List<AntiBanding> = listOf(AntiBanding.AUTO),
     val stabilization: StabilizationLevel = StabilizationLevel.NONE,
     val isoRange: IntRange? = null,
     val exposureRange: LongRange? = null,

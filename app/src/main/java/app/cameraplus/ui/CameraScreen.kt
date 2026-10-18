@@ -239,6 +239,7 @@ fun CameraScreen(
     val roll = rememberSensorRoll()
     var focusTarget by remember { mutableStateOf<Offset?>(null) }
     var focusLocked by remember { mutableStateOf(false) }
+    var focusTimeoutTick by remember { mutableIntStateOf(0) }
     var qrResult by remember { mutableStateOf<String?>(null) }
 
     // Subject tracking: armed from the top bar; the next tap locks the
@@ -261,6 +262,19 @@ fun CameraScreen(
         }
     }
 
+    // Focus timeout (GrapheneOS-style): an unlocked tap-to-focus hands the
+    // frame back to continuous autofocus after the chosen delay, so a shot
+    // taken later is not still metered to a spot the user has moved away from.
+    // Each tap restarts the wait, because the effect is keyed on the tick.
+    LaunchedEffect(focusTimeoutTick) {
+        if (focusTimeoutTick == 0) return@LaunchedEffect
+        val seconds = capturePreferences.focusTimeout.seconds
+        if (seconds <= 0) return@LaunchedEffect
+        delay(seconds * 1000L)
+        session.releaseFocusLock()
+        focusTarget = null
+    }
+
     var mode by remember { mutableStateOf(CameraMode.PHOTO) }
     var flashChoice by remember { mutableStateOf(capturePreferences.flashChoice) }
     var screenFlashAvailable by remember { mutableStateOf(false) }
@@ -271,6 +285,15 @@ fun CameraScreen(
     var burstShots by remember { mutableIntStateOf(0) }
     var burstActive by remember { mutableStateOf(false) }
     var status by remember { mutableStateOf<String?>(null) }
+
+    // Anti-flicker is a capture-request option, so the session rebinds on a
+    // change; the choices come from what the camera advertises.
+    LaunchedEffect(capturePreferences.antiBanding) {
+        if (capturePreferences.antiBanding == session.currentAntiBanding()) return@LaunchedEffect
+        session.setAntiBanding(capturePreferences.antiBanding) { error ->
+            status = error.message ?: "Could not change anti-flicker"
+        }
+    }
     var lastMediaUri by remember { mutableStateOf<Uri?>(null) }
     var dismissedQrValue by remember { mutableStateOf<String?>(null) }
     var bokehLevel by remember { mutableFloatStateOf(capturePreferences.portraitBlurLevel) }
@@ -317,7 +340,7 @@ fun CameraScreen(
     var capabilities by remember { mutableStateOf(SessionCapabilities()) }
     var zoom by remember { mutableFloatStateOf(1f) }
     var pinching by remember { mutableStateOf(false) }
-    var evIndex by remember { mutableIntStateOf(0) }
+    var evIndex by remember { mutableIntStateOf(capturePreferences.exposureCompensationIndex) }
     var recording by remember { mutableStateOf(false) }
     var specialStarting by remember { mutableStateOf(false) }
     var camera2PreviewVisible by remember { mutableStateOf(false) }
@@ -501,6 +524,9 @@ fun CameraScreen(
         videoFrameRate = session.setVideoFrameRate(videoFrameRate) { error -> status = error.message }
         session.setMirrorCaptureEnabled(mirrorCapture)
         session.setShutterSoundEnabled(shutterSoundEnabled)
+        // Turning KEEP EXPOSURE on adopts the value that was dialled in;
+        // turning it off hands the metering back to the camera's default.
+        evIndex = session.setExposureCompensationIndex(if (options.keepExposure) evIndex else 0)
     }
 
     fun bindCameraX() {
@@ -518,6 +544,7 @@ fun CameraScreen(
         session.setVideoFrameRate(videoFrameRate)
         session.setMirrorCaptureEnabled(mirrorCapture)
         session.setShutterSoundEnabled(shutterSoundEnabled)
+        session.setAntiBanding(capturePreferences.antiBanding)
         session.setWatermarkOptions(watermark)
         session.setCaptureLocation(currentLocation)
         session.setExtensionMode(extensionModeFor(mode, photoHdrEnabled))
@@ -575,6 +602,12 @@ fun CameraScreen(
                     photoResolution = PhotoResolution.STANDARD
                 }
                 if (!published.hdrExtensionAvailable) photoHdrEnabled = false
+                // Sticky exposure: re-apply the live index to every bind,
+                // clamped to what this lens accepts. The Nothing community
+                // asked for an exposure that survives a shot.
+                if (capturePreferences.keepExposure) {
+                    evIndex = session.setExposureCompensationIndex(evIndex)
+                }
                 // Reflect what the session actually bound (a lens switch
                 // rebinds; the zoom follows the new lens) instead of
                 // snapping back to 1x like the old stop-based code did.
@@ -1432,6 +1465,7 @@ fun CameraScreen(
                                     focusLocked = false
                                     evIndex = session.currentExposureCompensationIndex()
                                     session.focusAndMeterAt(offset.x, offset.y)
+                                    focusTimeoutTick++
                                 }
                             }
                         },
@@ -1480,7 +1514,10 @@ fun CameraScreen(
                     index = evIndex,
                     indexRange = capabilities.evRange,
                     evStep = capabilities.evStep,
-                    onChange = { evIndex = session.setExposureCompensationIndex(it) },
+                    onChange = {
+                        evIndex = session.setExposureCompensationIndex(it)
+                        capturePreferencesStore.setExposureCompensation(evIndex)
+                    },
                     modifier = Modifier
                         .align(Alignment.TopStart)
                         .offset {
@@ -2145,6 +2182,7 @@ fun CameraScreen(
                 ),
                 supportedVideoFrameRates = capabilities.supportedVideoFrameRates,
                 maximumPhotoResolutionSupported = capabilities.maximumPhotoResolutionSupported,
+                availableAntiBanding = capabilities.availableAntiBanding,
                 screenFlashSupported = screenFlashAvailable,
                 hdrExtensionAvailable = capabilities.hdrExtensionAvailable,
                 onCapturePreferencesChange = ::applyCapturePreferences,

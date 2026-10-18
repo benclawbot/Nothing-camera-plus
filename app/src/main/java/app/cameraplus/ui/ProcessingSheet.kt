@@ -36,6 +36,8 @@ import app.cameraplus.settings.PhotoFilter
 import app.cameraplus.settings.WatermarkOptions
 import app.cameraplus.settings.CapturePreferences
 import app.cameraplus.camera.FlashChoice
+import app.cameraplus.camera.AntiBanding
+import app.cameraplus.camera.FocusTimeout
 import app.cameraplus.camera.PhotoAspectRatio
 import app.cameraplus.camera.PhotoResolution
 import app.cameraplus.camera.SelfTimer
@@ -63,6 +65,7 @@ fun ProcessingSheet(
     capturePreferences: CapturePreferences,
     supportedVideoFrameRates: List<VideoFrameRate>,
     maximumPhotoResolutionSupported: Boolean,
+    availableAntiBanding: List<AntiBanding>,
     screenFlashSupported: Boolean,
     hdrExtensionAvailable: Boolean,
     onCapturePreferencesChange: (CapturePreferences) -> Unit,
@@ -154,6 +157,12 @@ fun ProcessingSheet(
                             onCapturePreferencesChange(capturePreferences.copy(selfTimer = it))
                         }
                     }
+                    SettingsChoices("FOCUS TIMEOUT", capturePreferences.focusTimeout.label,
+                        FocusTimeout.entries.map { it.label }) { value ->
+                        FocusTimeout.entries.firstOrNull { it.label == value }?.let {
+                            onCapturePreferencesChange(capturePreferences.copy(focusTimeout = it))
+                        }
+                    }
                     SettingsToggle("HARDWARE HDR EXTENSION", capturePreferences.photoHdrEnabled, hdrExtensionAvailable) {
                         onCapturePreferencesChange(capturePreferences.copy(photoHdrEnabled = !capturePreferences.photoHdrEnabled))
                     }
@@ -168,6 +177,15 @@ fun ProcessingSheet(
                     }
                     SettingsToggle("TOUCH SHUTTER", capturePreferences.touchShutter) {
                         onCapturePreferencesChange(capturePreferences.copy(touchShutter = !capturePreferences.touchShutter))
+                    }
+                    SettingsToggle("KEEP EXPOSURE", capturePreferences.keepExposure) {
+                        onCapturePreferencesChange(capturePreferences.copy(keepExposure = !capturePreferences.keepExposure))
+                    }
+                    SettingsChoices("ANTI-FLICKER", capturePreferences.antiBanding.label,
+                        availableAntiBanding.map { it.label }) { value ->
+                        AntiBanding.entries.firstOrNull { it.label == value }?.let {
+                            onCapturePreferencesChange(capturePreferences.copy(antiBanding = it))
+                        }
                     }
                 }
 

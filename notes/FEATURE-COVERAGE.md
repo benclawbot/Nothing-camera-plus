@@ -27,7 +27,9 @@ hold-shutter continuous shot (10-frame cap, PHOTO/EXPERT only), focal-length
 zoom labels, the settings sheet's restore-defaults action, the watermark
 camera-parameters line, `DCIM/Camera` storage for photos and videos, a
 gallery-app picker in the camera settings, in-app video playback and the
-expert histogram.
+expert histogram, zebra stripes and focus peaking (one shared analysis
+stream), sticky exposure (KEEP EXPOSURE), anti-flicker 50/60 Hz anti-banding
+and the GrapheneOS-style focus timeout.
 
 Genuine remaining gaps (clean-room implementable):
 
@@ -36,7 +38,6 @@ Genuine remaining gaps (clean-room implementable):
 | Video encoder picker (H.264 / H.265) | medium | CameraX Recorder picks the codec; Camera2 recorder path needed |
 | Video HDR / SHDR toggles | medium | device/extension dependent |
 | Night video mode | medium | |
-| Anti-flicker (50/60 Hz) control | small | Camera2 interop |
 | Slow-motion mute/snapshot rules, time-lapse scene hints | small | cosmetic |
 | Modes editor / reordering | small | cosmetic |
 
@@ -58,6 +59,9 @@ Nothing community's own camera feedback threads (`nothing.community`).
 |---|---|---|
 | Zebra stripes for blown highlights + a wash for crushed blacks | Open Camera; Nothing forum exposure requests | Implemented; device verification pending |
 | Focus peaking for manual focus | Open Camera; Nothing forum request ("Focus Peaking") | Implemented; device verification pending |
+| Sticky exposure (KEEP EXPOSURE) | Nothing forum request ("persistent exposure compensation setting") | Implemented; device verification pending |
+| Anti-flicker 50/60 Hz anti-banding | Nothing forum request ("Anti-Banding settings") | Implemented; device verification pending |
+| Focus timeout after tap-to-focus | GrapheneOS Secure Camera | Implemented; device verification pending |
 
 ---
 
@@ -346,5 +350,5 @@ unit-tested math component does not count as hardware feature parity.
 | Volume-key still shutter | ✅ | explicit opt-in and only while enabled |
 | Touch / smile shutter | 🟡 | touch shutter ships as a ProcessingSheet toggle and captures on preview taps; smile shutter absent |
 | Save-position / default-gallery selection | ✅ | captures go to `DCIM/Camera` and the settings sheet can pin a gallery app (automatic by default, uninstalled pins fall back); no user-selectable save path/SD card |
-| Anti-flicker, exposure-metering, dehaze/distortion controls | ⬜ | advanced vendor settings not implemented |
+| Anti-flicker, exposure-metering, dehaze/distortion controls | 🟡 | 50/60 Hz anti-banding is implemented from the camera's own advertised modes (2026-10-18); exposure metering weighting, dehaze and distortion controls remain vendor-only |
 | Restore defaults | ✅ | Camera settings sheet: RESTORE DEFAULTS resets capture preferences, processing look and watermark (geotag switched off); device unverified |

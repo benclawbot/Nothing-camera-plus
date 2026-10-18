@@ -120,3 +120,39 @@ object CaptureTimer {
         return left.coerceIn(0L, seconds.toLong()).toInt()
     }
 }
+
+/**
+ * Mains-flicker policy: banding under artificial light, which the original
+ * exposes as an anti-banding preference and the Nothing community asks for by
+ * name ("Anti-Banding settings").
+ *
+ * Only modes the camera itself advertises are offered; a device that reports
+ * nothing still gets [AUTO], which every camera accepts.
+ */
+enum class AntiBanding(val label: String) {
+    AUTO("AUTO"),
+    HZ_50("50 HZ"),
+    HZ_60("60 HZ"),
+}
+
+/** Folds a camera's advertised anti-banding modes into the choices to show. */
+object AntiBandingSupport {
+    fun available(reportsAuto: Boolean, reports50: Boolean, reports60: Boolean): List<AntiBanding> =
+        buildList {
+            if (reportsAuto) add(AntiBanding.AUTO)
+            if (reports50) add(AntiBanding.HZ_50)
+            if (reports60) add(AntiBanding.HZ_60)
+        }.ifEmpty { listOf(AntiBanding.AUTO) }
+}
+
+/**
+ * How long a tap-to-focus stays metered before the camera returns to
+ * continuous autofocus — GrapheneOS Secure Camera's "focus timeout". [OFF]
+ * keeps the reading until the next tap, which is the stock behaviour.
+ */
+enum class FocusTimeout(val label: String, val seconds: Int) {
+    OFF("OFF", 0),
+    FIVE_SECONDS("5s", 5),
+    FIFTEEN_SECONDS("15s", 15),
+    THIRTY_SECONDS("30s", 30),
+}

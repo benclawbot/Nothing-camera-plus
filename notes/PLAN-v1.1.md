@@ -264,3 +264,14 @@
   ZEBRAS and PEAKING chips beside HISTOGRAM; all three persist and share one
   rebind. 249 JVM tests pass (9 new); APK compiles. Device verification
   pending.
+- 2026-10-18: sticky exposure, anti-flicker and focus timeout, all three from
+  the community request list or a peer app. `AntiBanding` (AUTO / 50 HZ /
+  60 HZ) is offered only for modes the camera advertises
+  (`AntiBandingSupport`, unit-tested), applied as a Camera2 capture-request
+  option on the preview, still and video requests, and the session rebinds on
+  a change; `FocusTimeout` (off / 5 / 15 / 30 s) hands an unlocked tap-to-focus
+  back to continuous autofocus; KEEP EXPOSURE re-applies the dialled-in
+  compensation index to every bind and remembers it across launches, with the
+  viewfinder slider persisting each change. The settings sheet gains FOCUS
+  TIMEOUT, ANTI-FLICKER and KEEP EXPOSURE rows. 253 JVM tests pass (4 new);
+  APK compiles. Device verification pending.

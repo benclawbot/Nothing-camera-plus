@@ -19,6 +19,9 @@ Current release: **v1.2.0** (`versionCode 5`), debug-signed, `minSdk 33` (Androi
 | Expert histogram | Implemented; device verification pending |
 | Expert zebra stripes | Implemented; device verification pending |
 | Expert focus peaking | Implemented; device verification pending |
+| Sticky exposure (KEEP EXPOSURE) | Implemented; device verification pending |
+| Anti-flicker (50/60 Hz anti-banding) | Implemented; device verification pending |
+| Focus timeout | Implemented; device verification pending |
 | Subject tracking (photo + video) | Done, device-verified (added in v1.2.0) |
 | Launcher shortcuts | Implemented; device verification pending |
 | Continuous shot (hold shutter) | Implemented; device verification pending |
@@ -63,6 +66,8 @@ The carousel ships eleven entries: **PHOTO, PORTRAIT, BEAUTY, NIGHT, PANORAMA, M
 - RAW/DNG capture **plus** a companion JPEG where the hardware reports raw support.
 - Flash cycle: off / auto / on, plus **screen flash** for the front camera (CameraX `ScreenFlashView`); steady torch in video.
 - Self-timer off / 3 s / 10 s with a live countdown that can be cancelled.
+- **KEEP EXPOSURE** toggle: an exposure dialled in on the viewfinder slider is re-applied to every session change and remembered across launches, instead of being lost with the metering (a Nothing community request).
+- Anti-flicker: anti-banding at 50 Hz or 60 Hz, chosen from the modes the camera itself advertises.
 - Composition guides (rule of thirds, center, diagonal) and a gravity-driven level line.
 - Capture queueing: the shutter never locks while previous frames are written (up to four in flight).
 - Continuous shot: hold the shutter to queue a burst of up to 10 stills; releasing stops it. PHOTO and EXPERT only — the self-timer and the special pipelines are refused with a status note.
@@ -140,6 +145,7 @@ A clean-room tracking autofocus for both photo modes and video:
 - Tap-to-focus / tap-to-meter (combined AF+AE metering action; auto-cancels).
 - Long-press to lock focus/exposure until released.
 - Viewfinder EV slider after a tap, reading the device's compensation step.
+- Focus timeout: an unlocked tap-to-focus returns the frame to continuous autofocus after 5, 15 or 30 seconds (off by default), the way GrapheneOS Secure Camera does it.
 - Subject tracking (above) supersedes the plain tap while it is armed.
 
 ### Post-processing & looks
@@ -185,7 +191,7 @@ Requirements:
 
 ```bash
 ./gradlew :app:assembleDebug       # debug APK
-./gradlew :app:testDebugUnitTest   # JVM unit tests (249)
+./gradlew :app:testDebugUnitTest   # JVM unit tests (253)
 ```
 
 `local.properties` (git-ignored) points at your SDK:
@@ -213,7 +219,7 @@ Runtime requirement: Android 13 or newer (`minSdk 33` — the preview-parity GL 
   - `ui/CameraScreen.kt`, `ui/GalleryScreen.kt`, `ui/FocusControls.kt`, `ui/CompositionOverlay.kt`, `ui/ProcessingSheet.kt`, `ui/CameraPlusApp.kt`, `ui/theme/Theme.kt` — Compose UI
   - `processing/` — software still pipeline (`ImageProcessor` pure math, `JpegProcessor` glue, `WatermarkRenderer`)
   - `settings/` — capture/processing/watermark preference models and stores
-- `app/src/test/` — JVM unit tests (249)
+- `app/src/test/` — JVM unit tests (253)
 - `dist/` — built APKs
 
 ## License
