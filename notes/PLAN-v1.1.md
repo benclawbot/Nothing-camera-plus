@@ -229,3 +229,10 @@
   `OWNER_PACKAGE_NAME`, because DCIM/Camera is shared with other camera apps
   (it still finds shots made under the old `Pictures/Camera+` path). 232 JVM
   tests pass; APK compiles. Device verification pending.
+- 2026-10-18: default-gallery picker. The camera settings sheet lists the
+  installed galleries (gallery-home handlers plus image viewers, sorted, this
+  app excluded) and can pin one; `SystemGallery.open(preferredPackage)` tries
+  that package first (review → view → gallery home) and silently falls back to
+  the existing chain when it cannot serve, so an uninstalled pin is harmless.
+  Full reset returns the picker to Automatic. 234 JVM tests pass (2 new); APK
+  compiles. Device verification pending.

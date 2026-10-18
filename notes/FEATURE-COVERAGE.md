@@ -25,14 +25,14 @@ look, and the new subject tracking. Closed 2026-10-18: launcher shortcuts
 (static core set plus a shortcut intent that reaches every mode), the
 hold-shutter continuous shot (10-frame cap, PHOTO/EXPERT only), focal-length
 zoom labels, the settings sheet's restore-defaults action, the watermark
-camera-parameters line and `DCIM/Camera` storage for photos and videos.
+camera-parameters line and `DCIM/Camera` storage for photos and videos, plus a
+gallery-app picker in the camera settings.
 
 Genuine remaining gaps (clean-room implementable):
 
 | Gap | Effort | Note |
 |---|---|---|
 | Expert histogram / pro meter | medium | needs live luma statistics in the viewfinder |
-| Default-gallery picker / user save position | small | gallery hand-off resolves packages dynamically today |
 | In-app video playback | medium | videos hand off to the system player |
 | Video encoder picker (H.264 / H.265) | medium | CameraX Recorder picks the codec; Camera2 recorder path needed |
 | Video HDR / SHDR toggles | medium | device/extension dependent |
@@ -333,6 +333,6 @@ unit-tested math component does not count as hardware feature parity.
 | Shutter sound toggle | ✅ | MediaActionSound toggle; hardware/region policy may override |
 | Volume-key still shutter | ✅ | explicit opt-in and only while enabled |
 | Touch / smile shutter | 🟡 | touch shutter ships as a ProcessingSheet toggle and captures on preview taps; smile shutter absent |
-| Save-position / default-gallery selection | ⬜ | app currently writes to Camera+ MediaStore folders |
+| Save-position / default-gallery selection | ✅ | captures go to `DCIM/Camera` and the settings sheet can pin a gallery app (automatic by default, uninstalled pins fall back); no user-selectable save path/SD card |
 | Anti-flicker, exposure-metering, dehaze/distortion controls | ⬜ | advanced vendor settings not implemented |
 | Restore defaults | ✅ | Camera settings sheet: RESTORE DEFAULTS resets capture preferences, processing look and watermark (geotag switched off); device unverified |

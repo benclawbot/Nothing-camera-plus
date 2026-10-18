@@ -23,6 +23,7 @@ Current release: **v1.2.0** (`versionCode 5`), debug-signed, `minSdk 33` (Androi
 | Restore defaults | Implemented; device verification pending |
 | Watermark camera parameters | Implemented; device verification pending |
 | Captures in DCIM/Camera | Implemented; device verification pending |
+| Gallery app picker | Implemented; device verification pending |
 | Gallery hand-off and in-app gallery | Done, device-verified |
 | 213 JVM unit tests | Green |
 
@@ -147,7 +148,7 @@ A clean-room tracking autofocus for both photo modes and video:
 
 ### Gallery
 
-- The gallery button opens the **system gallery app directly on the newest capture** (Atom-11+-safe resolution chain: review action → default viewer → gallery-only VIEW → gallery home — never the system chooser).
+- The gallery button opens the **system gallery app directly on the newest capture** (Atom-11+-safe resolution chain: review action → default viewer → gallery-only VIEW → gallery home — never the system chooser). The camera settings can pin the app to use; automatic resolution stays the default, and a pinned app that is later uninstalled falls back to it.
 - In-app fallback grid with a photo viewer, share, favourite and delete; videos hand off to the system player.
 
 ### Settings sheet
@@ -178,7 +179,7 @@ Requirements:
 
 ```bash
 ./gradlew :app:assembleDebug       # debug APK
-./gradlew :app:testDebugUnitTest   # JVM unit tests (227)
+./gradlew :app:testDebugUnitTest   # JVM unit tests (234)
 ```
 
 `local.properties` (git-ignored) points at your SDK:
@@ -206,7 +207,7 @@ Runtime requirement: Android 13 or newer (`minSdk 33` — the preview-parity GL 
   - `ui/CameraScreen.kt`, `ui/GalleryScreen.kt`, `ui/FocusControls.kt`, `ui/CompositionOverlay.kt`, `ui/ProcessingSheet.kt`, `ui/CameraPlusApp.kt`, `ui/theme/Theme.kt` — Compose UI
   - `processing/` — software still pipeline (`ImageProcessor` pure math, `JpegProcessor` glue, `WatermarkRenderer`)
   - `settings/` — capture/processing/watermark preference models and stores
-- `app/src/test/` — JVM unit tests (227)
+- `app/src/test/` — JVM unit tests (234)
 - `dist/` — built APKs
 
 ## License

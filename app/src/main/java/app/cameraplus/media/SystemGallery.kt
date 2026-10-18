@@ -3,6 +3,7 @@ package app.cameraplus.media
 import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.content.pm.ResolveInfo
 import android.net.Uri
 
@@ -27,8 +28,22 @@ import android.net.Uri
  *
  * Apps are picked because the system says they are galleries / review
  * viewers, never by hardcoding vendor package names.
+ *
+ * When the user has chosen a gallery in the camera settings, that one package
+ * is tried first ([preferredPackage]); if it is gone or cannot take the item,
+ * the chain above runs unchanged.
  */
 object SystemGallery {
+
+    /** One installed app offered in the gallery picker. */
+    data class GalleryApp(val packageName: String, val label: String)
+
+    /**
+     * Package to hand captures to for a picked picker label; null means
+     * automatic (the chain in [open]). Labels come from [installedGalleries].
+     */
+    fun galleryPackageForLabel(apps: List<GalleryApp>, label: String): String? =
+        apps.firstOrNull { it.label == label }?.packageName
 
     /**
      * AOSP camera review action; the interop action gallery apps accept for
@@ -37,7 +52,8 @@ object SystemGallery {
     private const val ACTION_REVIEW = "com.android.camera.action.REVIEW"
 
     /** Opens the gallery at [uri], or the gallery home when [uri] is null. */
-    fun open(context: Context, uri: Uri?): Boolean {
+    fun open(context: Context, uri: Uri?, preferredPackage: String? = null): Boolean {
+        if (preferredPackage != null && openPreferred(context, uri, preferredPackage)) return true
         val galleries = queryHandlers(context, galleryHome())
             .mapNotNull { it.activityInfo?.packageName }
             .toSet()
@@ -79,6 +95,70 @@ object SystemGallery {
             if (launch(context, home, it)) return true
         }
         return false
+    }
+
+    /**
+     * Tries the user's chosen gallery explicitly: review, then plain view,
+     * then the gallery home, always aimed at that one package. Returns false
+     * when the package cannot take any of them, so the caller falls back to
+     * the normal chain instead of failing the hand-off.
+     */
+    private fun openPreferred(context: Context, uri: Uri?, packageName: String): Boolean {
+        val mime = uri?.let { context.contentResolver.getType(it) } ?: "*/*"
+        val candidates = buildList {
+            if (uri != null) {
+                add(
+                    Intent(ACTION_REVIEW).apply {
+                        setDataAndType(uri, mime)
+                        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                    },
+                )
+                add(
+                    Intent(Intent.ACTION_VIEW).apply {
+                        setDataAndType(uri, mime)
+                        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                    },
+                )
+            }
+            add(galleryHome())
+        }
+        candidates.forEach { intent ->
+            val handler = queryHandlers(context, intent)
+                .firstOrNull { it.activityInfo?.packageName == packageName }
+                ?: return@forEach
+            if (launch(context, intent, handler)) return true
+        }
+        return false
+    }
+
+    /**
+     * Galleries installed right now, for the settings picker: every app the
+     * system offers for the gallery home or for viewing images, deduplicated
+     * and sorted by label. This app itself is never offered.
+     */
+    fun installedGalleries(context: Context): List<GalleryApp> {
+        val packages = LinkedHashSet<String>()
+        queryHandlers(context, galleryHome()).forEach { info ->
+            info.activityInfo?.packageName?.let(packages::add)
+        }
+        queryHandlers(context, Intent(Intent.ACTION_VIEW).apply { type = "image/*" })
+            .forEach { info -> info.activityInfo?.packageName?.let(packages::add) }
+
+        val packageManager = context.packageManager
+        return packages
+            .filterNot { it == context.packageName }
+            .mapNotNull { packageName ->
+                runCatching {
+                    val info = packageManager.getApplicationInfo(
+                        packageName,
+                        PackageManager.ApplicationInfoFlags.of(0),
+                    )
+                    GalleryApp(packageName, packageManager.getApplicationLabel(info).toString())
+                }.getOrNull()
+            }
+            .filter { it.label.isNotBlank() }
+            .distinctBy { it.label }
+            .sortedBy { it.label.lowercase() }
     }
 
     private fun galleryHome(): Intent =

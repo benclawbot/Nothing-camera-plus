@@ -132,6 +132,7 @@ import app.cameraplus.camera.StabilizationProfile
 import app.cameraplus.settings.ProcessingSettingsStore
 import app.cameraplus.settings.CapturePreferences
 import app.cameraplus.settings.CapturePreferencesStore
+import app.cameraplus.settings.GalleryPreferenceStore
 import app.cameraplus.settings.WatermarkOptions
 import app.cameraplus.settings.WatermarkOptionsStore
 import app.cameraplus.processing.ImageProcessor
@@ -225,8 +226,11 @@ fun CameraScreen(
     val capturePreferencesStore = remember(context) { CapturePreferencesStore(context) }
     val capturePreferences = remember(capturePreferencesStore) { capturePreferencesStore.load() }
     val watermarkStore = remember(context) { WatermarkOptionsStore(context) }
+    val galleryStore = remember(context) { GalleryPreferenceStore(context) }
     var processing by remember { mutableStateOf(store.load()) }
     var watermark by remember { mutableStateOf(watermarkStore.load()) }
+    var preferredGallery by remember { mutableStateOf(galleryStore.load()) }
+    val galleryApps = remember(context) { SystemGallery.installedGalleries(context) }
     var showProcessing by remember { mutableStateOf(false) }
     var showGallery by remember { mutableStateOf(false) }
     var guides by remember { mutableStateOf(CompositionGuides.NONE) }
@@ -605,6 +609,10 @@ fun CameraScreen(
     LaunchedEffect(watermark) {
         watermarkStore.save(watermark)
         session.setWatermarkOptions(watermark)
+    }
+
+    LaunchedEffect(preferredGallery) {
+        galleryStore.save(preferredGallery)
     }
 
     LaunchedEffect(
@@ -1947,7 +1955,7 @@ fun CameraScreen(
                             // the newest Camera+ item on disk.
                             val target = lastMediaUri
                                 ?: MediaLibrary.recent(context, limit = 1).firstOrNull()?.uri
-                            if (!SystemGallery.open(context, target)) {
+                            if (!SystemGallery.open(context, target, preferredPackage = preferredGallery)) {
                                 // No gallery app on this device; keep ours.
                                 showGallery = true
                             }
@@ -2061,6 +2069,9 @@ fun CameraScreen(
                 onCapturePreferencesChange = ::applyCapturePreferences,
                 watermark = watermark,
                 onWatermarkChange = { watermark = it },
+                galleryApps = galleryApps,
+                preferredGalleryPackage = preferredGallery,
+                onPreferredGalleryChange = { preferredGallery = it },
                 geotagEnabled = geotagEnabled,
                 onGeotagToggle = ::toggleGeotag,
                 onDismiss = { showProcessing = false },

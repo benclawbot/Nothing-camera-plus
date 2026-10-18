@@ -30,6 +30,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import app.cameraplus.media.SystemGallery
 import app.cameraplus.settings.ProcessingSettings
 import app.cameraplus.settings.PhotoFilter
 import app.cameraplus.settings.WatermarkOptions
@@ -45,6 +46,9 @@ import app.cameraplus.ui.theme.FaintWhite
 import app.cameraplus.ui.theme.OffBlack
 import app.cameraplus.ui.theme.White
 import kotlin.math.roundToInt
+
+/** Picker label meaning "resolve the gallery app automatically" (see `SystemGallery`). */
+private const val AUTOMATIC_GALLERY = "Automatic"
 
 /**
  * Bottom sheet for the processing intent (M3): a one-tap NATURAL reset plus
@@ -64,6 +68,9 @@ fun ProcessingSheet(
     onCapturePreferencesChange: (CapturePreferences) -> Unit,
     watermark: WatermarkOptions,
     onWatermarkChange: (WatermarkOptions) -> Unit,
+    galleryApps: List<SystemGallery.GalleryApp>,
+    preferredGalleryPackage: String?,
+    onPreferredGalleryChange: (String?) -> Unit,
     geotagEnabled: Boolean,
     onGeotagToggle: () -> Unit,
     onDismiss: () -> Unit,
@@ -245,6 +252,19 @@ fun ProcessingSheet(
                         style = MaterialTheme.typography.labelSmall,
                         modifier = Modifier.padding(top = 8.dp),
                     )
+                    SettingsChoices(
+                        "GALLERY APP",
+                        galleryApps.firstOrNull { it.packageName == preferredGalleryPackage }?.label
+                            ?: AUTOMATIC_GALLERY,
+                        buildList {
+                            add(AUTOMATIC_GALLERY)
+                            galleryApps.forEach { add(it.label) }
+                        },
+                    ) { value ->
+                        onPreferredGalleryChange(
+                            SystemGallery.galleryPackageForLabel(galleryApps, value),
+                        )
+                    }
                 }
             }
 
@@ -260,6 +280,7 @@ fun ProcessingSheet(
                         onCapturePreferencesChange(CapturePreferences())
                         onSettingsChange(ProcessingSettings.NATURAL)
                         onWatermarkChange(WatermarkOptions())
+                        onPreferredGalleryChange(null)
                         if (geotagEnabled) onGeotagToggle()
                     }
                     .padding(vertical = 12.dp),
