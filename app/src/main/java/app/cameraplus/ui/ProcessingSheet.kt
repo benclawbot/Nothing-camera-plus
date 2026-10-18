@@ -297,6 +297,38 @@ fun ProcessingSheet(
                         style = MaterialTheme.typography.labelSmall,
                         modifier = Modifier.padding(top = 8.dp),
                     )
+                    SettingsToggle("STRIP METADATA", capturePreferences.stripMetadata) {
+                        onCapturePreferencesChange(
+                            capturePreferences.copy(stripMetadata = !capturePreferences.stripMetadata),
+                        )
+                    }
+                    OutlinedTextField(
+                        value = capturePreferences.exifAuthor,
+                        onValueChange = {
+                            onCapturePreferencesChange(capturePreferences.copy(exifAuthor = it.take(64)))
+                        },
+                        label = { Text("EXIF AUTHOR") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    OutlinedTextField(
+                        value = capturePreferences.exifCopyright,
+                        onValueChange = {
+                            onCapturePreferencesChange(
+                                capturePreferences.copy(exifCopyright = it.take(64)),
+                            )
+                        },
+                        label = { Text("EXIF COPYRIGHT") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    Text(
+                        text = "Stripping removes GPS and device/lens identity from saved JPEGs and keeps " +
+                            "orientation and capture time. DNG files are never rewritten.",
+                        color = White,
+                        style = MaterialTheme.typography.labelSmall,
+                        modifier = Modifier.padding(top = 4.dp),
+                    )
                     SettingsChoices("BARCODE TYPES", capturePreferences.barcodeScanning.label,
                         BarcodeScanning.entries.map { it.label }) { value ->
                         BarcodeScanning.entries.firstOrNull { it.label == value }?.let {
@@ -304,7 +336,8 @@ fun ProcessingSheet(
                         }
                     }
                     SettingsChoices(
-                        "GALLERY APP",                        galleryApps.firstOrNull { it.packageName == preferredGalleryPackage }?.label
+                        "GALLERY APP",
+                        galleryApps.firstOrNull { it.packageName == preferredGalleryPackage }?.label
                             ?: AUTOMATIC_GALLERY,
                         buildList {
                             add(AUTOMATIC_GALLERY)

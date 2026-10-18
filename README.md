@@ -28,6 +28,8 @@ Current release: **v1.2.0** (`versionCode 5`), debug-signed, `minSdk 33` (Androi
 | Default focal + 1x tap cycling | Implemented; device verification pending |
 | Self-timer series + voice countdown | Implemented; device verification pending |
 | Barcode type selection | Implemented; device verification pending |
+| Metadata stripping (GPS + device identity) | Implemented; device verification pending |
+| EXIF author / copyright fields | Implemented; device verification pending |
 | Subject tracking (photo + video) | Done, device-verified (added in v1.2.0) |
 | Launcher shortcuts | Implemented; device verification pending |
 | Continuous shot (hold shutter) | Implemented; device verification pending |
@@ -81,6 +83,7 @@ The carousel ships eleven entries: **PHOTO, PORTRAIT, BEAUTY, NIGHT, PANORAMA, M
 - Continuous shot: hold the shutter to queue a burst of up to 10 stills; releasing stops it. PHOTO and EXPERT only — the self-timer and the special pipelines are refused with a status note.
 - **Touch shutter** (tap the preview to capture) and **volume-key shutter**, both opt-in toggles; shutter-sound toggle.
 - Front-camera mirror capture preference, and opt-in geotagging written to MediaStore/EXIF.
+- **Metadata privacy**: a STRIP METADATA toggle removes GPS and device/lens identity tags from saved JPEGs while keeping orientation and capture time, and EXIF AUTHOR / EXIF COPYRIGHT fields stamp the file (GrapheneOS Secure Camera's strip switch, Open Camera's custom Exif text). DNG files are never rewritten.
 - Captures are written to the standard **`DCIM/Camera`** folder (photos and videos) — the same place the original app saves — and the in-app gallery reads its own rows back by owner package.
 - Watermark stamp: on/off with date, time, location, author and camera-parameters lines.
 
@@ -200,7 +203,7 @@ Requirements:
 
 ```bash
 ./gradlew :app:assembleDebug       # debug APK
-./gradlew :app:testDebugUnitTest   # JVM unit tests (273)
+./gradlew :app:testDebugUnitTest   # JVM unit tests (278)
 ```
 
 `local.properties` (git-ignored) points at your SDK:
@@ -228,7 +231,7 @@ Runtime requirement: Android 13 or newer (`minSdk 33` — the preview-parity GL 
   - `ui/CameraScreen.kt`, `ui/GalleryScreen.kt`, `ui/FocusControls.kt`, `ui/CompositionOverlay.kt`, `ui/ProcessingSheet.kt`, `ui/CameraPlusApp.kt`, `ui/theme/Theme.kt` — Compose UI
   - `processing/` — software still pipeline (`ImageProcessor` pure math, `JpegProcessor` glue, `WatermarkRenderer`)
   - `settings/` — capture/processing/watermark preference models and stores
-- `app/src/test/` — JVM unit tests (273)
+- `app/src/test/` — JVM unit tests (278)
 - `dist/` — built APKs
 
 ## License

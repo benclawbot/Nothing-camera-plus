@@ -68,6 +68,8 @@ Nothing community's own camera feedback threads (`nothing.community`).
 | Default focal (24/28/35 mm) and 1x tap cycling | Nothing forum request ("option to set 24,28 or 35mm as default focal length") | Implemented; device verification pending |
 | Self-timer up to 60 s, shot series and voice countdown | Open Camera | Implemented; device verification pending |
 | Barcode types beyond QR (2D matrix, product codes) | GrapheneOS Secure Camera | Implemented; device verification pending |
+| Metadata stripping (GPS and device identity) | GrapheneOS Secure Camera | Implemented; device verification pending |
+| EXIF author / copyright stamping | Open Camera | Implemented; device verification pending |
 
 ---
 

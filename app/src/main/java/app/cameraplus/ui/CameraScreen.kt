@@ -309,6 +309,20 @@ fun CameraScreen(
             status = error.message ?: "Could not change the barcode types"
         }
     }
+
+    // The privacy pass applies from the next capture on; it is a field, not a
+    // binding option, so no rebind is involved.
+    LaunchedEffect(
+        capturePreferences.stripMetadata,
+        capturePreferences.exifAuthor,
+        capturePreferences.exifCopyright,
+    ) {
+        session.setMetadataPrivacy(
+            strip = capturePreferences.stripMetadata,
+            author = capturePreferences.exifAuthor,
+            copyright = capturePreferences.exifCopyright,
+        )
+    }
     var lastMediaUri by remember { mutableStateOf<Uri?>(null) }
     var ghostEnabled by remember { mutableStateOf(capturePreferences.ghostImage) }
     var ghostBitmap by remember { mutableStateOf<ImageBitmap?>(null) }

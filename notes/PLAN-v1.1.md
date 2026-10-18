@@ -300,3 +300,13 @@
   `capturePreferences` became live state so settings read back what the sheet
   just changed. 273 JVM tests pass (10 new); APK compiles. Device verification
   pending.
+- 2026-10-18: metadata privacy. `ExifPrivacy` (media package, unit-tested)
+  holds the tag names to remove — GPS position/heading/speed, Make, Model,
+  Software, lens model and the serial numbers, owner and image ID — as plain
+  strings, and applies strip + author/copyright stamps through a
+  `ParcelFileDescriptor`. Every still passes the pass on its way out of
+  `CameraSession.capture` (one choke point for the neutral, processed and RAW
+  paths) and `saveArgbJpeg` covers the night/portrait/panorama saves; a DNG is
+  left untouched. The settings sheet gains STRIP METADATA and the EXIF AUTHOR /
+  EXIF COPYRIGHT fields. 278 JVM tests pass (5 new); APK compiles. Device
+  verification pending.

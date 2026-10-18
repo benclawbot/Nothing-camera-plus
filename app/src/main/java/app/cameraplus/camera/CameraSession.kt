@@ -10,9 +10,9 @@ import android.graphics.BitmapFactory
 import android.graphics.Matrix
 import android.hardware.camera2.params.RggbChannelVector
 import android.location.Location
+import android.media.MediaActionSound
 import android.os.Handler
 import android.os.Looper
-import android.media.MediaActionSound
 import android.hardware.camera2.CameraCharacteristics
 import android.hardware.camera2.CameraManager
 import android.hardware.camera2.CaptureRequest
@@ -57,6 +57,7 @@ import androidx.camera.view.PreviewView
 import androidx.core.content.ContextCompat
 import androidx.exifinterface.media.ExifInterface
 import androidx.lifecycle.LifecycleOwner
+import app.cameraplus.media.ExifPrivacy
 import app.cameraplus.media.MediaPaths
 import app.cameraplus.processing.CameraParameters
 import app.cameraplus.processing.JpegProcessor
@@ -235,6 +236,9 @@ class CameraSession(
     private var antiBandingMode = AntiBanding.AUTO
     private var availableAntiBandingModes: List<AntiBanding> = listOf(AntiBanding.AUTO)
     private var barcodeScanning = BarcodeScanning.QR_ONLY
+    private var stripMetadata = false
+    private var exifAuthor: String? = null
+    private var exifCopyright: String? = null
     private var zeroShutterLagSupported = false
     private var appliedCaptureMode = ImageCapture.CAPTURE_MODE_MINIMIZE_LATENCY
 
@@ -1012,6 +1016,17 @@ class CameraSession(
     }
 
     /**
+     * Privacy pass for saved stills: strip the tags that say where the photo was
+     * taken and which device took it, and stamp the author fields the user
+     * filled in. Applies from the next capture on, so it needs no rebind.
+     */
+    fun setMetadataPrivacy(strip: Boolean, author: String?, copyright: String?) {
+        stripMetadata = strip
+        exifAuthor = author?.takeIf { it.isNotBlank() }
+        exifCopyright = copyright?.takeIf { it.isNotBlank() }
+    }
+
+    /**
      * The Camera2 anti-banding code to request, or null for AUTO — the
      * platform default, which is left untouched so a camera that dislikes the
      * option is never sent it.
@@ -1071,15 +1086,22 @@ class CameraSession(
             return
         }
         val uprightRotation = uprightCaptureRotation()
+        // Every still passes the privacy pass on its way out, whatever pipeline
+        // produced it: the file is complete by the time any of these callbacks
+        // fire, so a single choke point covers them all.
+        val deliver: (Uri) -> Unit = { uri ->
+            applyMetadataPrivacy(uri)
+            onSaved(uri)
+        }
         when {
-            rawMode == RawMode.RAW_ONLY -> captureRawOnlyToFile(capture, onSaved, onError)
-            rawMode == RawMode.RAW_JPEG -> captureRawToFile(capture, uprightRotation, onSaved, onError)
+            rawMode == RawMode.RAW_ONLY -> captureRawOnlyToFile(capture, deliver, onError)
+            rawMode == RawMode.RAW_JPEG -> captureRawToFile(capture, uprightRotation, deliver, onError)
             settings == ProcessingSettings.NATURAL &&
                 !watermarkOptions.enabled &&
                 !shouldMirrorCapture() ->
-                captureToFile(capture, uprightRotation, onSaved, onError)
+                captureToFile(capture, uprightRotation, deliver, onError)
             else ->
-                captureToMemory(capture, uprightRotation, settings, onSaved, onNote, onError)
+                captureToMemory(capture, uprightRotation, settings, deliver, onNote, onError)
         }
     }
 
@@ -1306,6 +1328,7 @@ class CameraSession(
                 } ?: false
                 if (!saved) throw IllegalStateException("Could not encode the processed JPEG")
                 writeLocationExif(uri)
+                applyMetadataPrivacy(uri)
                 mainExecutor.execute { onSaved(uri) }
             } catch (t: Throwable) {
                 context.contentResolver.delete(uri, null, null)
@@ -2598,10 +2621,22 @@ class CameraSession(
             ),
         )
 
+    /**
+     * Best-effort Exif privacy pass over a finished still. A DNG is left alone:
+     * ExifInterface rewrites TIFF-based files and there is no JPEG metadata to
+     * protect there, so a raw file the user will develop themselves is never
+     * touched.
+     */
+    private fun applyMetadataPrivacy(uri: Uri) {
+        if (!stripMetadata && exifAuthor == null && exifCopyright == null) return
+        val type = runCatching { context.contentResolver.getType(uri) }.getOrNull()
+        if (type != null && type != "image/jpeg") return
+        ExifPrivacy.apply(context, uri, stripMetadata, exifAuthor, exifCopyright)
+    }
+
     private fun exifOrientationFor(rotationDegrees: Int): Int = when (
         ((rotationDegrees % 360) + 360) % 360
-    ) {
-        90 -> ExifInterface.ORIENTATION_ROTATE_90
+    ) {        90 -> ExifInterface.ORIENTATION_ROTATE_90
         180 -> ExifInterface.ORIENTATION_ROTATE_180
         270 -> ExifInterface.ORIENTATION_ROTATE_270
         else -> ExifInterface.ORIENTATION_NORMAL

@@ -51,6 +51,10 @@ data class CapturePreferences(
     val selfTimerShots: Int = 1,
     val voiceCountdown: Boolean = false,
     val barcodeScanning: BarcodeScanning = BarcodeScanning.QR_ONLY,
+    /** Remove GPS and device-identity tags from saved stills. */
+    val stripMetadata: Boolean = false,
+    val exifAuthor: String = "",
+    val exifCopyright: String = "",
 )
 
 class CapturePreferencesStore(context: Context) {
@@ -95,6 +99,9 @@ class CapturePreferencesStore(context: Context) {
             prefs.getString(KEY_BARCODE, null),
             BarcodeScanning.QR_ONLY,
         ),
+        stripMetadata = prefs.getBoolean(KEY_STRIP_METADATA, false),
+        exifAuthor = prefs.getString(KEY_EXIF_AUTHOR, "").orEmpty().take(64),
+        exifCopyright = prefs.getString(KEY_EXIF_COPYRIGHT, "").orEmpty().take(64),
     )
 
     /** Persists only the tracking toggle; the rest of the sheet is untouched. */
@@ -157,6 +164,9 @@ class CapturePreferencesStore(context: Context) {
             .putInt(KEY_TIMER_SHOTS, options.selfTimerShots.coerceIn(1, MAX_TIMER_SHOTS))
             .putBoolean(KEY_VOICE_COUNTDOWN, options.voiceCountdown)
             .putString(KEY_BARCODE, options.barcodeScanning.name)
+            .putBoolean(KEY_STRIP_METADATA, options.stripMetadata)
+            .putString(KEY_EXIF_AUTHOR, options.exifAuthor.take(64))
+            .putString(KEY_EXIF_COPYRIGHT, options.exifCopyright.take(64))
             .apply()
     }
 
@@ -194,6 +204,9 @@ class CapturePreferencesStore(context: Context) {
         const val KEY_TIMER_SHOTS = "self_timer_shots"
         const val KEY_VOICE_COUNTDOWN = "voice_countdown"
         const val KEY_BARCODE = "barcode_scanning"
+        const val KEY_STRIP_METADATA = "strip_metadata"
+        const val KEY_EXIF_AUTHOR = "exif_author"
+        const val KEY_EXIF_COPYRIGHT = "exif_copyright"
         val TIME_LAPSE_SPEEDS = setOf(15, 30, 60, 120, 240, 480, 960)
         val SLOW_MOTION_RATES = setOf(120, 240, 480)
 
