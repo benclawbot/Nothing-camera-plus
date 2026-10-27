@@ -18,3 +18,9 @@ local.properties
 .externalNativeBuild
 .cxx
 captures/
+
+# Build artifacts - never commit binaries
+dist/
+*.apk
+*.aab
+
